@@ -1,0 +1,105 @@
+name: gnn-fraud-detection
+
+# Skeleton only: neo4j, redpanda, and postgres are real, runnable infra services.
+# The api and streamlit services are placeholders (no app code exists yet) - they
+# just prove the network/env wiring; each gets a real Dockerfile + build context
+# when that component is built (see docs/EXECUTION-GUIDE.md, Build Loop).
+
+services:
+  neo4j:
+    image: neo4j:5.26.25-community
+    container_name: neo4j
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
+    ports:
+      - "7474:7474" # browser UI
+      - "7687:7687" # bolt
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redpanda:
+    image: redpandadata/redpanda:v26.2.2
+    container_name: redpanda
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+      - --smp 1
+      - --default-log-level=info
+    ports:
+      - "19092:19092" # kafka-API listener reachable from the host
+      - "9644:9644"   # admin/healthcheck API
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16.15-alpine
+    container_name: postgres
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    # Placeholder for C8 (FastAPI scoring service). No Dockerfile yet -
+    # replace `image`/`command` with `build: ./src/api` once the service exists.
+    image: python:3.11-slim
+    container_name: api
+    env_file:
+      - path: .env
+        required: false
+    command: ["sleep", "infinity"]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      - postgres
+      - neo4j
+      - redpanda
+
+  streamlit:
+    # Placeholder for C10 (Streamlit dashboard). No Dockerfile yet -
+    # replace `image`/`command` with `build: ./src/dashboard` once the app exists.
+    image: python:3.11-slim
+    container_name: streamlit
+    env_file:
+      - path: .env
+        required: false
+    command: ["sleep", "infinity"]
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    depends_on:
+      - api
+
+volumes:
+  neo4j_data:
+  redpanda_data:
+  postgres_data:

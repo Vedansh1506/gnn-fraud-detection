@@ -1,0 +1,70 @@
+[project]
+name = "gnn-fraud-detection"
+version = "0.1.0"
+description = "Real-time graph-based (GNN) fraud & mule detection platform"
+requires-python = ">=3.11,<3.12"
+readme = "README.md"
+
+dependencies = [
+    # --- API (C8) ---
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    # --- Frontend (C10) ---
+    "streamlit==1.63.0",
+    "streamlit-agraph==0.0.45",
+    # --- GNN (C6) ---
+    # torch capped below 2.13: PyG's prebuilt extension wheels track torch
+    # only up to 2.12.x, and both also cap out Python 3.11 support here -
+    # newer torch/PyG releases require Python >=3.12.
+    "torch==2.12.1",
+    "torch-geometric==2.8.0.post1",
+    # --- Tabular ML + explainability (C7) ---
+    # xgboost 3.4.1 and shap 0.52.0 (the latest at pin-time) both require
+    # Python >=3.12; these are the newest releases that still support 3.11.
+    "xgboost==3.2.0",
+    "scikit-learn==1.9.0",
+    "shap==0.51.0",
+    # --- Graph DB client (C4) ---
+    "neo4j==6.3.0",
+    # --- Relational DB (C9) ---
+    "sqlalchemy==2.0.52",
+    "psycopg[binary]==3.3.5",
+    # --- Streaming (C1/C2/C3) ---
+    "confluent-kafka==2.15.0",
+    "boto3==1.43.89",
+    # --- Feature store (C5) ---
+    # feast caps pandas <3, which is why pandas is pinned to the 2.x line below.
+    "feast==0.66.0",
+    # --- MLOps (C11) ---
+    "mlflow==3.16.0",
+    "evidently==0.7.21",
+    # --- Data ---
+    # pandas held on the 2.x line (feast's <3 cap); numpy 2.5+ requires Python >=3.12.
+    "pandas==2.3.3",
+    "numpy==2.4.6",
+    "pyarrow==25.0.1",
+    # --- Auth ---
+    "pyjwt==2.13.0",
+    "passlib[bcrypt]==1.7.4",
+    # --- Config ---
+    "python-dotenv==1.2.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "httpx==0.28.1",
+    "ruff==0.16.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
