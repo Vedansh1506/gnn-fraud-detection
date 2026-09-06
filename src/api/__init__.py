@@ -1,1 +1,1 @@
-"""C8: FastAPI scoring service (modular monolith) - fuses features + embeddings, scores, explains, audits."""
+"""C8: FastAPI scoring service - fuses features + embeddings, scores, explains via SHAP."""

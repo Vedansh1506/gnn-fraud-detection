@@ -218,6 +218,10 @@ __marimo__/
 .streamlit/secrets.toml
 
 # --- Project-specific: never commit datasets or model artifacts ---
+# Planning docs, decision log, and this codebase's own explainer are for
+# personal/local use only - not for the public GitHub view.
+docs/
+
 # Raw/processed IBM AML data (large; keep it local only).
 # Ignore each leaf directory's *contents* directly (data/raw/*, not data/*)
 # rather than ignoring data/raw/ itself - un-ignoring a directory that a
@@ -241,6 +245,8 @@ artifacts/embeddings/*
 *.pt
 *.pth
 *.joblib
+# ...except small, synthetic test fixtures - these are code, not data.
+!tests/fixtures/*.csv
 
 # MLflow local tracking store.
 mlruns/

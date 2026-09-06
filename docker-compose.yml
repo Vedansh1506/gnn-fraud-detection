@@ -9,9 +9,11 @@ services:
   neo4j:
     image: neo4j:5.26.25-community
     container_name: neo4j
-    env_file:
-      - path: .env
-        required: false
+    # No env_file here: the official image auto-converts every NEO4J_*
+    # variable it sees into a server config setting, so our own app-level
+    # NEO4J_URI (meant for src/common/config.py, not the server) would leak
+    # in and crash the container under strict config validation. Pass only
+    # the one variable Neo4j itself actually reads.
     environment:
       NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
     ports:
@@ -52,9 +54,8 @@ services:
   postgres:
     image: postgres:16.15-alpine
     container_name: postgres
-    env_file:
-      - path: .env
-        required: false
+    # No env_file: same reasoning as neo4j above - pass only what the
+    # postgres image itself recognizes, not the whole app config.
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
