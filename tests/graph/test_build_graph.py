@@ -49,18 +49,15 @@ def _cleanup() -> None:
         )
 
 
-def test_build_graph_is_idempotent(neo4j_available, tmp_path):
-    # tmp_path for the feature output: without it this test overwrites the
-    # real data/processed/*.parquet built from the full 6.9M-row dataset
-    # with its own 5-row fixture (which is exactly what happened once).
+def test_build_graph_is_idempotent(neo4j_available):
     _cleanup()
     try:
-        build_graph(FIXTURE_PATH, limit=None, batch_size=100, processed_dir=tmp_path)
+        build_graph(FIXTURE_PATH, limit=None, batch_size=100)
         first_nodes, first_edges = _counts()
         assert first_nodes > 0
         assert first_edges > 0
 
-        build_graph(FIXTURE_PATH, limit=None, batch_size=100, processed_dir=tmp_path)
+        build_graph(FIXTURE_PATH, limit=None, batch_size=100)
         second_nodes, second_edges = _counts()
 
         assert second_nodes == first_nodes
@@ -69,13 +66,17 @@ def test_build_graph_is_idempotent(neo4j_available, tmp_path):
         _cleanup()
 
 
-def test_build_graph_writes_features_only_to_given_dir(neo4j_available, tmp_path):
-    """Guards the clobbering bug above: features must land in the caller's
-    directory, never the default one, when processed_dir is passed."""
+def test_build_graph_writes_no_feature_files(neo4j_available, tmp_path, monkeypatch):
+    """Regression guard: the loader used to write feature parquet files to a
+    hardcoded data/processed/, so running this fixture-based test overwrote the
+    real features built from the full 6.9M-row dataset. Feature generation now
+    belongs to the training pipeline, which knows the train/val/test split and
+    can keep it leakage-free.
+    """
+    monkeypatch.chdir(tmp_path)
     _cleanup()
     try:
-        build_graph(FIXTURE_PATH, limit=None, batch_size=100, processed_dir=tmp_path)
-        assert (tmp_path / "tx_features.parquet").exists()
-        assert (tmp_path / "account_features.parquet").exists()
+        build_graph(FIXTURE_PATH, limit=None, batch_size=100)
+        assert not list(tmp_path.rglob("*.parquet"))
     finally:
         _cleanup()

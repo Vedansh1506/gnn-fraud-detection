@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from src.features.account_features import compute_account_features
+from src.features.account_features import fit_account_features, join_account_features
 
 
 def _sample_df() -> pd.DataFrame:
@@ -23,7 +23,7 @@ def _row(result: pd.DataFrame, account_key: str) -> pd.Series:
 
 
 def test_degrees_and_counterparties():
-    result = compute_account_features(_sample_df())
+    result = fit_account_features(_sample_df())
     a = _row(result, "A")
     assert a["out_degree"] == 3
     assert a["in_degree"] == 1
@@ -35,21 +35,42 @@ def test_degrees_and_counterparties():
 
 
 def test_avg_amount_is_average_sent():
-    result = compute_account_features(_sample_df())
+    result = fit_account_features(_sample_df())
     assert _row(result, "A")["avg_amount"] == pytest.approx(200.0)  # (100+300+200)/3
     assert _row(result, "B")["avg_amount"] == pytest.approx(50.0)
 
 
 def test_avg_amount_zero_for_pure_receiver():
     # C only ever receives - never sends, so avg_amount defaults to 0.0, not NaN.
-    result = compute_account_features(_sample_df())
-    assert _row(result, "C")["avg_amount"] == 0.0
+    assert _row(fit_account_features(_sample_df()), "C")["avg_amount"] == 0.0
+
+
+def test_amount_std_undefined_stays_nan():
+    """Deliberately not filled with 0: a 0 std would divide to infinity in the
+    z-score, whereas NaN signals "no usable spread" and collapses to 0.0."""
+    result = fit_account_features(_sample_df())
+    assert pd.isna(_row(result, "B")["amount_std"])  # single send
+    assert pd.isna(_row(result, "C")["amount_std"])  # never sends
+    assert _row(result, "A")["amount_std"] > 0
 
 
 def test_tx_count_24h_is_trailing_window_as_of_last_activity():
     # A's last event is 2022-09-03 00:00; only that event itself falls within
     # the trailing 24h window ending there (the day-1 cluster is >24h earlier).
-    result = compute_account_features(_sample_df())
+    result = fit_account_features(_sample_df())
     assert _row(result, "A")["tx_count_24h"] == 1
     assert _row(result, "B")["tx_count_24h"] == 1
     assert _row(result, "C")["tx_count_24h"] == 1
+
+
+def test_join_prefixes_columns_and_defaults_unknown_accounts():
+    fitted = fit_account_features(_sample_df())
+    transactions = pd.DataFrame(
+        {"sender_account_key": ["A", "UNKNOWN"], "receiver_account_key": ["B", "B"]}
+    )
+
+    joined = join_account_features(transactions, fitted, "sender")
+
+    assert joined.loc[0, "sender_out_degree"] == 3
+    assert joined.loc[1, "sender_out_degree"] == 0  # unseen -> neutral default
+    assert "sender_avg_amount" in joined.columns

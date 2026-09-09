@@ -1,10 +1,13 @@
-"""Batch-load the historical LI-Small file into Neo4j and write engineered features.
+"""Batch-load the historical LI-Small file into Neo4j.
 
     uv run python -m src.graph.build_graph [--limit N] [--batch-size N]
 
 Offline/historical bootstrap only (see docs/EXECUTION-GUIDE.md Build Loop step 1
-and the approved plan) - the live streaming consumer (SAD C3) is a later step
-that will reuse compute_tx_features/compute_account_features directly.
+and the approved plan) - the live streaming consumer (SAD C3) is a later step.
+
+Feature generation deliberately does NOT live here: features must be fitted on
+a training window to stay leakage-free, which only the training pipeline knows
+about, so src/models/classifier/dataset.py owns it.
 """
 
 from __future__ import annotations
@@ -16,13 +19,10 @@ import numpy as np
 import pandas as pd
 
 from src.data.load_amlworld import DEFAULT_TRANSACTIONS_PATH, load_transactions
-from src.features.account_features import compute_account_features
-from src.features.tx_features import compute_tx_features
 from src.graph.client import session_scope
 from src.graph.schema import ensure_schema
 
 DEFAULT_BATCH_SIZE = 5000
-PROCESSED_DIR = Path("data/processed")
 
 _ACCOUNT_UPSERT = (
     "UNWIND $batch AS row "
@@ -107,24 +107,7 @@ def _upsert_transactions(records: list[dict], batch_size: int) -> None:
                 print(f"  ... {done:,} / {total:,}")
 
 
-def write_features(df: pd.DataFrame, processed_dir: Path = PROCESSED_DIR) -> None:
-    """processed_dir is a parameter, not a constant, so a caller running against
-    a small fixture (the integration test) can redirect output to a temp
-    directory instead of overwriting the real feature files built from the
-    full dataset.
-    """
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    compute_tx_features(df).to_parquet(processed_dir / "tx_features.parquet", index=False)
-    compute_account_features(df).to_parquet(processed_dir / "account_features.parquet", index=False)
-    print(f"Wrote tx_features.parquet and account_features.parquet to {processed_dir}/")
-
-
-def build_graph(
-    path: Path,
-    limit: int | None,
-    batch_size: int,
-    processed_dir: Path = PROCESSED_DIR,
-) -> None:
+def build_graph(path: Path, limit: int | None, batch_size: int) -> None:
     ensure_schema()
     print(f"Loading {path} ...")
     df = load_transactions(path, limit=limit)
@@ -132,7 +115,6 @@ def build_graph(
 
     _upsert_accounts(_prepare_account_records(df), batch_size)
     _upsert_transactions(_prepare_transaction_records(df), batch_size)
-    write_features(df, processed_dir)
     print("Done.")
 
 
