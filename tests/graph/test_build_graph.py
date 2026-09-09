@@ -49,18 +49,33 @@ def _cleanup() -> None:
         )
 
 
-def test_build_graph_is_idempotent(neo4j_available):
+def test_build_graph_is_idempotent(neo4j_available, tmp_path):
+    # tmp_path for the feature output: without it this test overwrites the
+    # real data/processed/*.parquet built from the full 6.9M-row dataset
+    # with its own 5-row fixture (which is exactly what happened once).
     _cleanup()
     try:
-        build_graph(FIXTURE_PATH, limit=None, batch_size=100)
+        build_graph(FIXTURE_PATH, limit=None, batch_size=100, processed_dir=tmp_path)
         first_nodes, first_edges = _counts()
         assert first_nodes > 0
         assert first_edges > 0
 
-        build_graph(FIXTURE_PATH, limit=None, batch_size=100)
+        build_graph(FIXTURE_PATH, limit=None, batch_size=100, processed_dir=tmp_path)
         second_nodes, second_edges = _counts()
 
         assert second_nodes == first_nodes
         assert second_edges == first_edges
+    finally:
+        _cleanup()
+
+
+def test_build_graph_writes_features_only_to_given_dir(neo4j_available, tmp_path):
+    """Guards the clobbering bug above: features must land in the caller's
+    directory, never the default one, when processed_dir is passed."""
+    _cleanup()
+    try:
+        build_graph(FIXTURE_PATH, limit=None, batch_size=100, processed_dir=tmp_path)
+        assert (tmp_path / "tx_features.parquet").exists()
+        assert (tmp_path / "account_features.parquet").exists()
     finally:
         _cleanup()

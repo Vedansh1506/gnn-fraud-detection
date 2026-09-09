@@ -107,14 +107,24 @@ def _upsert_transactions(records: list[dict], batch_size: int) -> None:
                 print(f"  ... {done:,} / {total:,}")
 
 
-def write_features(df: pd.DataFrame) -> None:
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    compute_tx_features(df).to_parquet(PROCESSED_DIR / "tx_features.parquet", index=False)
-    compute_account_features(df).to_parquet(PROCESSED_DIR / "account_features.parquet", index=False)
-    print(f"Wrote tx_features.parquet and account_features.parquet to {PROCESSED_DIR}/")
+def write_features(df: pd.DataFrame, processed_dir: Path = PROCESSED_DIR) -> None:
+    """processed_dir is a parameter, not a constant, so a caller running against
+    a small fixture (the integration test) can redirect output to a temp
+    directory instead of overwriting the real feature files built from the
+    full dataset.
+    """
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    compute_tx_features(df).to_parquet(processed_dir / "tx_features.parquet", index=False)
+    compute_account_features(df).to_parquet(processed_dir / "account_features.parquet", index=False)
+    print(f"Wrote tx_features.parquet and account_features.parquet to {processed_dir}/")
 
 
-def build_graph(path: Path, limit: int | None, batch_size: int) -> None:
+def build_graph(
+    path: Path,
+    limit: int | None,
+    batch_size: int,
+    processed_dir: Path = PROCESSED_DIR,
+) -> None:
     ensure_schema()
     print(f"Loading {path} ...")
     df = load_transactions(path, limit=limit)
@@ -122,7 +132,7 @@ def build_graph(path: Path, limit: int | None, batch_size: int) -> None:
 
     _upsert_accounts(_prepare_account_records(df), batch_size)
     _upsert_transactions(_prepare_transaction_records(df), batch_size)
-    write_features(df)
+    write_features(df, processed_dir)
     print("Done.")
 
 
