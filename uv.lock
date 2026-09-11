@@ -918,6 +918,9 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+gnn = [
+    { name = "pyg-lib", marker = "sys_platform == 'win32'" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -954,6 +957,7 @@ dev = [
     { name = "pytest", specifier = "==9.1.1" },
     { name = "ruff", specifier = "==0.16.6" },
 ]
+gnn = [{ name = "pyg-lib", marker = "sys_platform == 'win32'", specifier = "==0.9.0+pt212cpu", index = "https://data.pyg.org/whl/torch-2.12.0+cpu.html" }]
 
 [[package]]
 name = "google-auth"
@@ -2308,6 +2312,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f4/c9/f71032fca47ecc09d30904d9a610234b07139f89eabc2f054b141edcc30f/pydeck-0.9.3.tar.gz", hash = "sha256:695775cbfe51f5fdffbd9735ba469987fdc5efc96bc40a0ee4808170509c78b2", size = 5900912, upload-time = "2026-07-02T23:27:08.704Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6f/34/3998411437aff304a9ed4fa37a6fe1ef3132bcd2b5eac59851b80c86123c/pydeck-0.9.3-py2.py3-none-any.whl", hash = "sha256:d8a47c11c81fb12d51b1feb42427ff4f0e13cb599e48931021b2cba98b6849a6", size = 11428091, upload-time = "2026-07-02T23:27:06.399Z" },
+]
+
+[[package]]
+name = "pyg-lib"
+version = "0.9.0+pt212cpu"
+source = { registry = "https://data.pyg.org/whl/torch-2.12.0+cpu.html" }
+wheels = [
+    { url = "https://data.pyg.org/whl/torch-2.12.0%2Bcpu/pyg_lib-0.9.0%2Bpt212cpu-cp310-abi3-win_amd64.whl" },
 ]
 
 [[package]]

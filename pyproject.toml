@@ -58,9 +58,27 @@ dev = [
     "httpx==0.28.1",
     "ruff==0.16.6",
 ]
+# Optional, and deliberately not a core dependency: pyg-lib ships
+# platform-and-torch-specific wheels (win_amd64+cpu here, CUDA on Kaggle), so
+# pinning one in [project.dependencies] would break the install everywhere
+# else. Needed only on the machine that trains the GNN, for PyG's
+# NeighborLoader mini-batch sampling.
+#   uv pip install pyg-lib -f https://data.pyg.org/whl/torch-2.12.0+cpu.html
+gnn = [
+    "pyg-lib==0.9.0+pt212cpu ; sys_platform == 'win32'",
+]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+pyg-lib = [{ index = "pyg", marker = "sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pyg"
+url = "https://data.pyg.org/whl/torch-2.12.0+cpu.html"
+format = "flat"
+explicit = true
 
 [tool.ruff]
 line-length = 100

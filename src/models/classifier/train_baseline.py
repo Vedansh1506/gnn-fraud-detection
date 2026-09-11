@@ -17,7 +17,6 @@ import xgboost as xgb
 
 from src.models.classifier.dataset import (
     CATEGORICAL_COLUMNS,
-    FEATURE_COLUMNS,
     Dataset,
     build_dataset,
 )
@@ -60,7 +59,12 @@ def train(dataset: Dataset) -> xgb.XGBClassifier:
     return model
 
 
-def save_artifacts(model: xgb.XGBClassifier, dataset: Dataset, version: str) -> Path:
+def save_artifacts(
+    model: xgb.XGBClassifier,
+    dataset: Dataset,
+    version: str,
+    embeddings: Path | None = None,
+) -> Path:
     """Everything serving needs, pinned together under one version directory.
 
     feature_spec.json is the train/serve contract: the exact ordered feature
@@ -77,7 +81,10 @@ def save_artifacts(model: xgb.XGBClassifier, dataset: Dataset, version: str) -> 
         json.dumps(
             {
                 "model_version": version,
-                "feature_columns": FEATURE_COLUMNS,
+                # Recorded so evaluate.py rebuilds the identical feature set
+                # rather than relying on the caller passing the same flags.
+                "embeddings_path": str(embeddings) if embeddings else None,
+                "feature_columns": dataset.feature_columns,
                 "categorical_columns": CATEGORICAL_COLUMNS,
                 "scale_pos_weight": dataset.scale_pos_weight,
                 "best_iteration": int(model.best_iteration),
@@ -90,9 +97,12 @@ def save_artifacts(model: xgb.XGBClassifier, dataset: Dataset, version: str) -> 
     return out_dir
 
 
-def main(limit: int | None, version: str) -> None:
+def main(limit: int | None, version: str, embeddings: Path | None) -> None:
     print("Building dataset (this loads and re-derives features - a few minutes)...")
-    dataset = build_dataset(limit=limit)
+    if embeddings:
+        print(f"Fusing GNN embeddings from {embeddings}")
+    dataset = build_dataset(limit=limit, embeddings_path=embeddings)
+    print(f"features: {len(dataset.feature_columns)}")
     print(
         f"train {len(dataset.y_train):,} rows / {int(dataset.y_train.sum()):,} positives | "
         f"val {len(dataset.y_val):,} / {int(dataset.y_val.sum()):,} | "
@@ -101,7 +111,7 @@ def main(limit: int | None, version: str) -> None:
     print(f"scale_pos_weight (train only): {dataset.scale_pos_weight:,.1f}")
 
     model = train(dataset)
-    out_dir = save_artifacts(model, dataset, version)
+    out_dir = save_artifacts(model, dataset, version, embeddings)
     print(f"Best iteration: {model.best_iteration}")
     print(f"Wrote artifacts to {out_dir}/")
     print("Run evaluate.py for held-out test metrics.")
@@ -111,5 +121,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=None, help="Load only the first N rows.")
     parser.add_argument("--version", type=str, default=MODEL_VERSION)
+    parser.add_argument(
+        "--embeddings",
+        type=Path,
+        default=None,
+        help="Parquet of GNN account embeddings to fuse in (produces the graph-augmented model).",
+    )
     args = parser.parse_args()
-    main(args.limit, args.version)
+    main(args.limit, args.version, args.embeddings)

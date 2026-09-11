@@ -12,7 +12,7 @@ laundering-labelled positives, not equal row counts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -38,6 +38,40 @@ FEATURE_COLUMNS = (
 CATEGORICAL_COLUMNS = ["payment_format"]
 
 
+def embedding_columns(embeddings: pd.DataFrame) -> list[str]:
+    return [c for c in embeddings.columns if c.startswith("emb_")]
+
+
+def feature_columns_with_embeddings(embeddings: pd.DataFrame | None) -> list[str]:
+    """The baseline and the GNN-augmented model differ only by these columns -
+    everything else about the pipeline is deliberately identical, so the AUPRC
+    comparison isolates the embeddings and nothing else."""
+    if embeddings is None:
+        return list(FEATURE_COLUMNS)
+    emb = embedding_columns(embeddings)
+    return (
+        list(FEATURE_COLUMNS)
+        + [f"sender_{c}" for c in emb]
+        + [f"receiver_{c}" for c in emb]
+    )
+
+
+def join_embeddings(
+    features: pd.DataFrame, embeddings: pd.DataFrame, side: str
+) -> pd.DataFrame:
+    """Accounts with no embedding (never seen in the training-window graph) get
+    zeros - the locked "missing embedding -> neutral default" rule, and the same
+    thing the serving path does on a Feast cache miss."""
+    emb = embedding_columns(embeddings)
+    renamed = embeddings.rename(columns={c: f"{side}_{c}" for c in emb})
+    joined = features.merge(
+        renamed, how="left", left_on=f"{side}_account_key", right_on="account_key"
+    )
+    prefixed = [f"{side}_{c}" for c in emb]
+    joined[prefixed] = joined[prefixed].fillna(0.0)
+    return joined.drop(columns=["account_key"])
+
+
 @dataclass
 class Dataset:
     """Feature matrices and labels for one modelling run, plus the fitted
@@ -51,6 +85,7 @@ class Dataset:
     x_test: pd.DataFrame
     y_test: pd.Series
     account_features: pd.DataFrame
+    feature_columns: list[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
 
     @property
     def scale_pos_weight(self) -> float:
@@ -82,34 +117,47 @@ def _require_non_empty_splits(*splits: pd.DataFrame) -> None:
         )
 
 
-def build_features(df: pd.DataFrame, account_features: pd.DataFrame) -> pd.DataFrame:
+def build_features(
+    df: pd.DataFrame,
+    account_features: pd.DataFrame,
+    embeddings: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Apply already-fitted account statistics to a set of transactions."""
     features = compute_tx_features(df, account_features)
     keys = df[["sender_account_key", "receiver_account_key"]].reset_index(drop=True)
     features = pd.concat([features.reset_index(drop=True), keys], axis=1)
     features = join_account_features(features, account_features, "sender")
     features = join_account_features(features, account_features, "receiver")
+    if embeddings is not None:
+        features = join_embeddings(features, embeddings, "sender")
+        features = join_embeddings(features, embeddings, "receiver")
     for column in CATEGORICAL_COLUMNS:
         features[column] = features[column].astype("category")
     return features
 
 
 def build_dataset(
-    path: Path = DEFAULT_TRANSACTIONS_PATH, limit: int | None = None
+    path: Path = DEFAULT_TRANSACTIONS_PATH,
+    limit: int | None = None,
+    embeddings_path: Path | None = None,
 ) -> Dataset:
     df = load_transactions(path, limit=limit)
     train_df, val_df, test_df = split_by_time(df)
     _require_non_empty_splits(train_df, val_df, test_df)
 
+    embeddings = pd.read_parquet(embeddings_path) if embeddings_path else None
+    columns = feature_columns_with_embeddings(embeddings)
+
     # Fitted on train only - this is the whole point (see module docstring).
     account_features = fit_account_features(train_df)
 
     return Dataset(
-        x_train=build_features(train_df, account_features)[FEATURE_COLUMNS],
+        x_train=build_features(train_df, account_features, embeddings)[columns],
         y_train=train_df["Is Laundering"].astype(int).reset_index(drop=True),
-        x_val=build_features(val_df, account_features)[FEATURE_COLUMNS],
+        x_val=build_features(val_df, account_features, embeddings)[columns],
         y_val=val_df["Is Laundering"].astype(int).reset_index(drop=True),
-        x_test=build_features(test_df, account_features)[FEATURE_COLUMNS],
+        x_test=build_features(test_df, account_features, embeddings)[columns],
         y_test=test_df["Is Laundering"].astype(int).reset_index(drop=True),
         account_features=account_features,
+        feature_columns=columns,
     )

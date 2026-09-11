@@ -58,7 +58,12 @@ def evaluate(model: xgb.XGBClassifier, x_test: pd.DataFrame, y_test: pd.Series) 
 
 
 def main(version: str) -> None:
-    dataset = build_dataset()
+    # Rebuild features exactly as this model version was trained - the spec
+    # records whether embeddings were fused, so baseline and GNN models are
+    # evaluated through one code path on one split.
+    spec = json.loads((ARTIFACTS_ROOT / version / "feature_spec.json").read_text())
+    embeddings_path = spec.get("embeddings_path")
+    dataset = build_dataset(embeddings_path=Path(embeddings_path) if embeddings_path else None)
     model = load_model(version)
     metrics = evaluate(model, dataset.x_test, dataset.y_test)
     metrics["model_version"] = version
