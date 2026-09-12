@@ -41,7 +41,7 @@ def compute_tx_features(df: pd.DataFrame, account_features: pd.DataFrame) -> pd.
             "amount_paid": df["Amount Paid"],
             "amount_received": df["Amount Received"],
             "hour_of_day": df["Timestamp"].dt.hour,
-            "amount_zscore": _safe_zscore(df["Amount Paid"], mean, std),
+            "amount_zscore": safe_zscore(df["Amount Paid"], mean, std),
             "payment_format": df["Payment Format"],
             # Payment/Receiving Currency are category dtype (memory-efficient
             # on the full file) with independently-built category sets, so
@@ -55,7 +55,7 @@ def compute_tx_features(df: pd.DataFrame, account_features: pd.DataFrame) -> pd.
     )
 
 
-def _safe_zscore(values: pd.Series, mean: pd.Series, std: pd.Series) -> pd.Series:
+def safe_zscore(values: pd.Series, mean: pd.Series, std: pd.Series) -> pd.Series:
     """0.0 wherever the z-score isn't defined.
 
     Three cases collapse to "no usable signal": an account unseen in training

@@ -86,6 +86,14 @@ def save_artifacts(
                 "embeddings_path": str(embeddings) if embeddings else None,
                 "feature_columns": dataset.feature_columns,
                 "categorical_columns": CATEGORICAL_COLUMNS,
+                # The ordered category list, not just the column name:
+                # XGBoost's categorical codes are positional, so serving must
+                # rebuild a single row against these exact categories or the
+                # same string silently maps to a different code.
+                "categorical_values": {
+                    column: list(map(str, dataset.x_train[column].cat.categories))
+                    for column in CATEGORICAL_COLUMNS
+                },
                 "scale_pos_weight": dataset.scale_pos_weight,
                 "best_iteration": int(model.best_iteration),
                 "train_rows": int(len(dataset.y_train)),
