@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
 
+    redpanda_bootstrap_servers: str = "localhost:19092"
+    transactions_topic: str = "transactions"
+    scoring_api_base_url: str = "http://localhost:8000"
+
     @field_validator("model_version", "embedding_version", mode="before")
     @classmethod
     def _blank_falls_back_to_default(cls, value: str | None, info: ValidationInfo) -> str:
