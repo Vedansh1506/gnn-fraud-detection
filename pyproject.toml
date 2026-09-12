@@ -47,7 +47,10 @@ dependencies = [
     "pyarrow==25.0.1",
     # --- Auth ---
     "pyjwt==2.13.0",
-    "passlib[bcrypt]==1.7.4",
+    # bcrypt directly rather than passlib[bcrypt]: passlib 1.7.4 (last released
+    # 2020) crashes on import against bcrypt 5.x, and rules.md warns off
+    # abandoned libraries. Same algorithm SAD 8 asks for, maintained wrapper.
+    "bcrypt==5.0.0",
     # --- Config ---
     "python-dotenv==1.2.3",
 ]

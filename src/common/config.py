@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # a metric - it is an operational choice about analyst queue volume.
     flag_threshold: float = 0.9
 
+    service_api_key: str = "change-me"
+    jwt_secret_key: str = "change-me-use-a-long-random-value"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60
+
     @field_validator("model_version", "embedding_version", mode="before")
     @classmethod
     def _blank_falls_back_to_default(cls, value: str | None, info: ValidationInfo) -> str:

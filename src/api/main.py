@@ -2,27 +2,48 @@
 
     uv run uvicorn src.api.main:app --reload
 
-Currently serves the core scoring path: POST /score and GET /health.
-/flags, /feedback, /graph and auth arrive with the dashboard that consumes them.
+Endpoints (TRD 5.1): POST /score (X-API-Key, service-to-service), GET /health
+(open, for liveness probes), and the dashboard-facing set behind JWT -
+POST /auth/login, GET /flags, POST /feedback, GET /graph/{account_key}, and
+POST /retrain (operator role only).
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Request
-from sqlalchemy import text
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from sqlalchemy import select, text
 
+from src.api.auth import (
+    authenticate_user,
+    create_access_token,
+    require_api_key,
+    require_operator,
+    require_user,
+)
+from src.api.graph_context import fetch_neighbourhood
 from src.api.schemas import (
     ComponentHealth,
+    FeedbackRequest,
+    FeedbackResponse,
+    FlaggedTransaction,
+    FlagsResponse,
+    GraphResponse,
     HealthResponse,
+    LoginRequest,
+    LoginResponse,
+    RetrainResponse,
     ScoreRequest,
     ScoreResponse,
 )
 from src.api.scoring import load_artifacts, score_transaction
 from src.common.config import get_settings
-from src.db.models import AuditLogEntry
+from src.db.models import AuditLogEntry, Feedback
 from src.db.session import create_tables, session_scope
 
 logging.basicConfig(
@@ -62,7 +83,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="GNN Fraud Detection - Scoring API", lifespan=lifespan)
 
 
-@app.post("/score", response_model=ScoreResponse)
+@app.post("/score", response_model=ScoreResponse, dependencies=[Depends(require_api_key)])
 def score(request: ScoreRequest) -> ScoreResponse:
     artifacts = _state.get("artifacts")
     if artifacts is None:
@@ -136,6 +157,138 @@ def _write_audit_log(request: ScoreRequest, response: ScoreResponse) -> None:
             )
     except Exception:
         logger.exception("audit log write failed for tx_id=%s", response.tx_id)
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+def login(request: LoginRequest) -> LoginResponse:
+    """Not in TRD 5.1, but the Design Doc's login screen and SAD 8's JWT
+    requirement need somewhere to exchange credentials for a token. Added by
+    decision on 2026-09-12, with the users table added to TRD 4.3 to match."""
+    user = authenticate_user(request.username, request.password)
+    if user is None:
+        # Deliberately identical for unknown user and wrong password.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
+        )
+
+    settings = get_settings()
+    logger.info("login username=%s role=%s", user.username, user.role)
+    return LoginResponse(
+        access_token=create_access_token(user.username, user.role),
+        role=user.role,
+        expires_in_minutes=settings.jwt_expire_minutes,
+    )
+
+
+@app.get("/flags", response_model=FlagsResponse)
+def flags(
+    _claims: Annotated[dict, Depends(require_user)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    since: datetime | None = None,
+) -> FlagsResponse:
+    """The analyst queue: most recent flags first (Design Doc 4.2). Capped at
+    500 to keep the dashboard's <2s load target honest."""
+    query = select(AuditLogEntry).where(AuditLogEntry.is_flagged.is_(True))
+    if since is not None:
+        query = query.where(AuditLogEntry.scored_at >= since)
+    query = query.order_by(AuditLogEntry.scored_at.desc()).limit(limit)
+
+    with session_scope() as session:
+        entries = list(session.scalars(query))
+
+    return FlagsResponse(
+        flags=[
+            FlaggedTransaction(
+                tx_id=entry.tx_id,
+                account_key=entry.account_key,
+                score=entry.score,
+                is_flagged=entry.is_flagged,
+                model_version=entry.model_version,
+                embedding_version=entry.embedding_version,
+                scored_at=entry.scored_at,
+                explanation=(entry.explanation_json or {}).get("factors", []),
+            )
+            for entry in entries
+        ],
+        count=len(entries),
+    )
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+def feedback(
+    request: FeedbackRequest, claims: Annotated[dict, Depends(require_user)]
+) -> FeedbackResponse:
+    """Records an analyst decision. used_in_training_run stays NULL until a
+    retrain consumes it, which is how the next retrain finds new labels."""
+    with session_scope() as session:
+        session.add(
+            Feedback(
+                tx_id=request.tx_id,
+                analyst_decision=request.analyst_decision,
+                decided_by=str(claims.get("sub", "unknown")),
+            )
+        )
+
+    logger.info(
+        "feedback tx_id=%s decision=%s by=%s",
+        request.tx_id,
+        request.analyst_decision,
+        claims.get("sub"),
+    )
+    return FeedbackResponse(status="recorded", tx_id=request.tx_id)
+
+
+@app.post("/retrain", response_model=RetrainResponse)
+def retrain(claims: Annotated[dict, Depends(require_operator)]) -> RetrainResponse:
+    """Operator-only. GNN training runs on Kaggle/Colab (locked compute
+    decision), so for the MVP this returns a reference id and the steps rather
+    than kicking off a job the API has no GPU to run - TRD 5.1 allows exactly
+    that. Nothing is persisted yet; a retrain-history table can come with the
+    dashboard's Model & Ops screen if it's wanted there.
+    """
+    job_id = f"retrain-{uuid.uuid4().hex[:12]}"
+    logger.info("retrain requested job_id=%s by=%s", job_id, claims.get("sub"))
+    return RetrainResponse(
+        job_id=job_id,
+        status="accepted",
+        instructions=(
+            "1) uv run --group gnn python -m src.models.gnn.train_graphsage "
+            "--version <new_embedding_version>  "
+            "2) uv run python -m src.models.classifier.train_baseline "
+            "--embeddings artifacts/embeddings/<new_embedding_version>/embeddings.parquet "
+            "--version <new_model_version>  "
+            "3) uv run python -m src.models.classifier.evaluate --version <new_model_version>  "
+            "4) promote by pointing MODEL_VERSION/EMBEDDING_VERSION at the new "
+            "versions only after they clear the eval gate."
+        ),
+    )
+
+
+@app.get("/graph/{account_key}", response_model=GraphResponse)
+def graph(
+    account_key: str,
+    _claims: Annotated[dict, Depends(require_user)],
+    hops: Annotated[int, Query(ge=1, le=3)] = 2,
+) -> GraphResponse:
+    """Money-flow context for the flag detail view. Neo4j being down fails just
+    this panel with a clear message - it never blocks scoring, which reads no
+    graph at all."""
+    try:
+        neighbourhood = fetch_neighbourhood(account_key, hops)
+    except Exception as exc:
+        logger.exception("graph lookup failed for %s", account_key)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Graph context unavailable - the graph database is unreachable.",
+        ) from exc
+
+    return GraphResponse(
+        account_key=neighbourhood.account_key,
+        hops=hops,
+        nodes=neighbourhood.nodes,
+        edges=[vars(edge) for edge in neighbourhood.edges],
+        truncated=neighbourhood.truncated,
+    )
 
 
 @app.exception_handler(Exception)
