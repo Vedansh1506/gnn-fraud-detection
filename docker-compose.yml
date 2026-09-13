@@ -1,9 +1,11 @@
 name: gnn-fraud-detection
 
-# Skeleton only: neo4j, redpanda, and postgres are real, runnable infra services.
-# The api and streamlit services are placeholders (no app code exists yet) - they
-# just prove the network/env wiring; each gets a real Dockerfile + build context
-# when that component is built (see docs/EXECUTION-GUIDE.md, Build Loop).
+# neo4j, redpanda and postgres are real infra services. `frontend` builds the
+# React dashboard and serves it from nginx. `api` is still a placeholder: the
+# FastAPI service is run from the host during development
+# (`uv run uvicorn src.api.main:app --port 8000`) because it loads ~700k
+# embeddings at startup and rebuilding an image for every change is slower than
+# reloading in place. It gets a real build context at the cloud-deploy step.
 
 services:
   neo4j:
@@ -86,17 +88,18 @@ services:
       - neo4j
       - redpanda
 
-  streamlit:
-    # Placeholder for C10 (Streamlit dashboard). No Dockerfile yet -
-    # replace `image`/`command` with `build: ./src/dashboard` once the app exists.
-    image: python:3.11-slim
-    container_name: streamlit
-    env_file:
-      - path: .env
-        required: false
-    command: ["sleep", "infinity"]
+  frontend:
+    # C10, the React dashboard (replaced Streamlit on 2026-09-13).
+    build:
+      context: ./frontend
+      args:
+        # Baked in at build time - Vite has no runtime env. The browser, not
+        # the container, makes these calls, so this is the URL as the *user's
+        # browser* sees the API, never the compose service name.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    container_name: frontend
     ports:
-      - "${DASHBOARD_PORT:-8501}:8501"
+      - "${DASHBOARD_PORT:-5173}:80"
     depends_on:
       - api
 

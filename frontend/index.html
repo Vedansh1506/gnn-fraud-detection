@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6 L18 12 L6 18' stroke='%235b8def' stroke-width='1.6' fill='none' opacity='.5'/%3E%3Ccircle cx='6' cy='6' r='2.8' fill='%235b8def'/%3E%3Ccircle cx='18' cy='12' r='2.8' fill='%23e66767'/%3E%3Ccircle cx='6' cy='18' r='2.8' fill='%235b8def'/%3E%3C/svg%3E"
+    />
+    <title>Mule Detection Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Stamp the theme before first paint. React sets this too, but it does so
+      // after hydration - long enough for a light-preference viewer to see a
+      // flash of the dark palette. Kept tiny, inline and blocking on purpose:
+      // it must run before the browser paints anything.
+      (function () {
+        try {
+          var stored = localStorage.getItem('gnn-fraud.theme')
+          if (stored !== 'dark' && stored !== 'light') {
+            stored = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+          }
+          document.documentElement.dataset.theme = stored
+        } catch (e) {
+          document.documentElement.dataset.theme = 'dark'
+        }
+      })()
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

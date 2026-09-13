@@ -1,0 +1,213 @@
+@import 'tailwindcss';
+
+/*
+  Design tokens (Design Doc §10).
+
+  Semantic-first: the base is neutral and low-saturation so that colour, when it
+  appears, means risk. Every colour is defined once here as a role; components
+  reference roles, never raw hex, which is what makes the light/dark swap a
+  single edit rather than an audit.
+
+  Dark is the default because this is a monitoring tool that sits open on a
+  screen all day. Light is fully specified, not an afterthought.
+
+  The chart colours are the validated data-viz palette, not hand-picked: the
+  categorical pair and the diverging poles were run through a colour-vision
+  validator (worst-case CVD ΔE 19.2 for the diverging pair, 9.2 categorical)
+  rather than chosen by eye.
+*/
+
+@theme {
+  --font-sans: 'Inter var', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
+
+  /* Motion. One easing curve and three durations across the whole app - the
+     fastest way to make an interface feel incoherent is a different timing per
+     component. */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast: 140ms;
+  --duration-base: 240ms;
+  --duration-slow: 420ms;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, darkest plane outward. */
+  --plane: #0b0b0d;
+  --surface: #131316;
+  --surface-raised: #191920;
+  --surface-hover: #1f1f28;
+  --border: #26262f;
+  --border-strong: #33333f;
+
+  /* Ink. */
+  --ink: #f4f4f6;
+  --ink-secondary: #a9a9b6;
+  --ink-muted: #74748a;
+
+  /* Accent - calm, non-alarming. Used for primary actions and focus, never
+     for risk (Principle 5: colour is reserved for risk). */
+  --accent: #5b8def;
+  --accent-hover: #7aa3f5;
+  --accent-ink: #0b0b0d;
+  --accent-soft: rgb(91 141 239 / 0.14);
+
+  /* Risk / status. Fixed, never themed, and never the only signal - every use
+     is paired with an icon and a text label (§11). */
+  --risk-critical: #e66767;
+  --risk-critical-soft: rgb(230 103 103 / 0.14);
+  --risk-warning: #fab219;
+  --risk-warning-soft: rgb(250 178 25 / 0.14);
+  --risk-good: #35c759;
+  --risk-good-soft: rgb(53 199 89 / 0.14);
+
+  /* Chart roles. Diverging poles for SHAP (raises vs lowers risk) and the
+     categorical pair for baseline-vs-GNN. */
+  --viz-pos: #e66767; /* pushes toward fraud */
+  --viz-neg: #3987e5; /* pushes away from fraud */
+  --viz-mid: #383835;
+  --viz-series-1: #3987e5;
+  --viz-series-2: #d95926;
+  --viz-grid: #24242c;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.5);
+  --radius-card: 14px;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --plane: #f7f7f5;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: #f2f2ef;
+  --border: #e3e3de;
+  --border-strong: #cfcfc8;
+
+  --ink: #14141a;
+  --ink-secondary: #52514e;
+  --ink-muted: #7a7a72;
+
+  --accent: #2a78d6;
+  --accent-hover: #1c5cab;
+  --accent-ink: #ffffff;
+  --accent-soft: rgb(42 120 214 / 0.1);
+
+  --risk-critical: #d03b3b;
+  --risk-critical-soft: rgb(208 59 59 / 0.1);
+  --risk-warning: #b06f00;
+  --risk-warning-soft: rgb(176 111 0 / 0.12);
+  --risk-good: #0d7a2e;
+  --risk-good-soft: rgb(13 122 46 / 0.1);
+
+  --viz-pos: #d03b3b;
+  --viz-neg: #2a78d6;
+  --viz-mid: #f0efec;
+  --viz-series-1: #2a78d6;
+  --viz-series-2: #eb6834;
+  --viz-grid: #e1e0d9;
+
+  --shadow-card: 0 1px 2px rgb(20 20 26 / 0.05), 0 8px 24px -16px rgb(20 20 26 / 0.18);
+}
+
+/* Expose the roles to Tailwind so `bg-surface` / `text-ink` work as utilities
+   and components never hardcode a colour. */
+@theme inline {
+  --color-plane: var(--plane);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-hover: var(--surface-hover);
+  --color-border-subtle: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-muted: var(--ink-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-risk-critical: var(--risk-critical);
+  --color-risk-critical-soft: var(--risk-critical-soft);
+  --color-risk-warning: var(--risk-warning);
+  --color-risk-warning-soft: var(--risk-warning-soft);
+  --color-risk-good: var(--risk-good);
+  --color-risk-good-soft: var(--risk-good-soft);
+  --color-viz-pos: var(--viz-pos);
+  --color-viz-neg: var(--viz-neg);
+  --color-viz-grid: var(--viz-grid);
+  --radius-card: var(--radius-card);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--plane);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Identifiers (account keys, tx ids) are monospace and tabular so they align
+   down a column and can be compared character by character (§9). */
+.identifier {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A single visible focus treatment everywhere. Streamlit gave this for free;
+   in a custom frontend it has to be deliberate or keyboard users lose the
+   cursor entirely (§11). */
+:where(a, button, input, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Scrollbars, so a dark UI doesn't get a bright native scrollbar down its side. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* Honour the OS setting. Every animation in this app is decoration over a
+   state change that is already legible without it, so removing motion removes
+   nothing but the movement. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -255,3 +255,9 @@ mlartifacts/
 # Neo4j / Postgres / Redpanda local volume mounts, if bind-mounted instead of named volumes.
 volumes/
 
+
+# --- Frontend (React dashboard) ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local

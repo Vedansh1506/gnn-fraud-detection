@@ -12,8 +12,6 @@ dependencies = [
     "pydantic==2.13.5",
     "pydantic-settings==2.15.0",
     # --- Frontend (C10) ---
-    "streamlit==1.63.0",
-    "streamlit-agraph==0.0.45",
     # --- GNN (C6) ---
     # torch capped below 2.13: PyG's prebuilt extension wheels track torch
     # only up to 2.12.x, and both also cap out Python 3.11 support here -
