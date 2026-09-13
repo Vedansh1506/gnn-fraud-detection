@@ -74,6 +74,13 @@ class LoginResponse(BaseModel):
 
 
 class FlaggedTransaction(BaseModel):
+    """One row of the analyst queue (Design Doc 4.2).
+
+    The transaction detail fields are optional because audit rows written
+    before those columns existed genuinely do not have them - the UI shows an
+    honest em-dash rather than a fabricated amount.
+    """
+
     tx_id: str
     account_key: str
     score: float
@@ -83,10 +90,33 @@ class FlaggedTransaction(BaseModel):
     scored_at: datetime
     explanation: list[ExplanationFactor]
 
+    receiver_account_key: str | None = None
+    amount_paid: float | None = None
+    payment_currency: str | None = None
+    payment_format: str | None = None
+    tx_timestamp: datetime | None = None
+
+    # None = nobody has reviewed this flag yet, which is what makes it "open".
+    analyst_decision: Literal["confirmed_fraud", "false_positive"] | None = None
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+
+
+class QueueSummary(BaseModel):
+    """The Flag Queue's summary strip (Design Doc 4.2). Counted over the whole
+    audit log, not just the returned page - a count that changes with page size
+    would be worse than no count."""
+
+    open_flags: int
+    confirmed_today: int
+    dismissed_today: int
+    model_version: str
+
 
 class FlagsResponse(BaseModel):
     flags: list[FlaggedTransaction]
     count: int
+    summary: QueueSummary
 
 
 class FeedbackRequest(BaseModel):
@@ -107,6 +137,65 @@ class RetrainResponse(BaseModel):
     job_id: str
     status: str
     instructions: str
+    requested_at: datetime
+    feedback_rows_pending: int
+
+
+class RetrainRunOut(BaseModel):
+    job_id: str
+    status: str
+    requested_by: str
+    requested_at: datetime
+    feedback_rows_pending: int
+    resulting_model_version: str | None = None
+
+
+class ModelVersionOut(BaseModel):
+    """A trained version as recorded in its own `metrics.json` artifact. Every
+    number here was measured by an evaluation run; nothing is computed or
+    guessed at read time."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    version: str
+    auprc: float
+    roc_auc: float
+    test_rows: int
+    test_positives: int
+    best_f1_threshold: float
+    best_f1_precision: float
+    best_f1_recall: float
+    best_f1: float
+    is_serving: bool
+    embedding_version: str | None = None
+
+
+class DriftStatus(BaseModel):
+    """Deliberately shaped to be able to say "not measured yet". Evidently
+    lands in a later build step, and a green light nobody computed would be a
+    lie in exactly the place this project claims honesty."""
+
+    state: Literal["ok", "warning", "alert", "not_instrumented"]
+    message: str
+    checked_at: datetime | None = None
+
+
+class ModelsResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    serving_model_version: str
+    serving_embedding_version: str
+    flag_threshold: float
+    versions: list[ModelVersionOut]
+    baseline_auprc: float | None = None
+    gnn_auprc: float | None = None
+    auprc_lift_pct: float | None = None
+    # Share of reviewed flags the analyst rejected - the closest thing to a
+    # live quality signal the MVP actually has.
+    override_rate: float | None = None
+    reviewed_count: int
+    drift: DriftStatus
+    recent_retrains: list[RetrainRunOut]
 
 
 class GraphEdgeOut(BaseModel):

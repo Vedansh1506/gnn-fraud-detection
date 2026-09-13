@@ -1,8 +1,10 @@
 """Relational schema (TRD 4.3). Postgres in Docker for dev, RDS in cloud - the
 same SQLAlchemy code runs against both, which is why dev doesn't use SQLite.
 
-model_registry_meta is not here yet: nothing reads it until the dashboard's
-Model & Ops screen exists.
+The Model & Ops screen reads trained-model metadata straight from the pinned
+artifacts on disk (each version's `metrics.json`), so there is still no
+`model_registry_meta` table - the artifacts are already the source of truth and
+a table would just be a copy that can drift from them.
 """
 
 from __future__ import annotations
@@ -29,6 +31,9 @@ CONFIRMED_FRAUD = "confirmed_fraud"
 FALSE_POSITIVE = "false_positive"
 ANALYST_DECISIONS = (CONFIRMED_FRAUD, FALSE_POSITIVE)
 
+REQUESTED = "requested"
+RETRAIN_STATUSES = ("requested", "running", "completed", "failed")
+
 
 class Base(DeclarativeBase):
     pass
@@ -45,6 +50,9 @@ class AuditLogEntry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tx_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    # The sending side. Kept as `account_key` rather than renamed to
+    # `sender_account_key`: it is the audit row's subject account and the key
+    # /graph is opened on, and the TRD vocabulary rule forbids synonyms.
     account_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
     score: Mapped[float] = mapped_column(Float, nullable=False)
     is_flagged: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -54,6 +62,22 @@ class AuditLogEntry(Base):
     embedding_version: Mapped[str] = mapped_column(String, nullable=False)
     scored_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    # Transaction detail carried on the audit row so the analyst queue can show
+    # a triageable line (amount, counterparty, when it happened) without a
+    # second lookup per row. Added 2026-09-13 with TRD 4.3 updated to match;
+    # nullable because rows written before that change have no values and
+    # backfilling a synthetic amount would be inventing data.
+    receiver_account_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    amount_paid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    payment_currency: Mapped[str | None] = mapped_column(String, nullable=True)
+    payment_format: Mapped[str | None] = mapped_column(String, nullable=True)
+    # When the transaction happened, as opposed to scored_at (when we saw it).
+    # A stream replay makes these differ by years, and the analyst needs the
+    # former to judge the transaction.
+    tx_timestamp: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 
@@ -80,6 +104,40 @@ class Feedback(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     used_in_training_run: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class RetrainRun(Base):
+    """Retrain requests, so the Ops screen can show real history rather than a
+    fire-and-forget job id.
+
+    Added 2026-09-13 (TRD 4.3) when the Model & Ops screen needed it. Honest
+    about what it is: the locked compute decision puts GNN training on
+    Kaggle/Colab, so the API cannot execute a retrain. A row records that an
+    operator *requested* one and stays `requested` until someone runs the steps
+    and closes it out - it is a work order, not a job runner.
+    """
+
+    __tablename__ = "retrain_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('requested', 'running', 'completed', 'failed')",
+            name="retrain_runs_status_check",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default=REQUESTED)
+    requested_by: Mapped[str] = mapped_column(String, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # How many feedback rows were unused at request time - the reason to
+    # retrain, captured when the decision was made rather than recomputed later.
+    feedback_rows_pending: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Set when the operator closes the run out with the versions it produced.
+    resulting_model_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class User(Base):

@@ -4,19 +4,22 @@
 
 Endpoints (TRD 5.1): POST /score (X-API-Key, service-to-service), GET /health
 (open, for liveness probes), and the dashboard-facing set behind JWT -
-POST /auth/login, GET /flags, POST /feedback, GET /graph/{account_key}, and
-POST /retrain (operator role only).
+POST /auth/login, GET /flags, POST /feedback, GET /graph/{account_key},
+GET /models, and POST /retrain (operator role only).
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func as sql_func
 from sqlalchemy import select, text
 
 from src.api.auth import (
@@ -27,8 +30,10 @@ from src.api.auth import (
     require_user,
 )
 from src.api.graph_context import fetch_neighbourhood
+from src.api.model_registry import baseline_and_gnn, lift_pct, list_versions
 from src.api.schemas import (
     ComponentHealth,
+    DriftStatus,
     FeedbackRequest,
     FeedbackResponse,
     FlaggedTransaction,
@@ -37,13 +42,24 @@ from src.api.schemas import (
     HealthResponse,
     LoginRequest,
     LoginResponse,
+    ModelsResponse,
+    ModelVersionOut,
+    QueueSummary,
     RetrainResponse,
+    RetrainRunOut,
     ScoreRequest,
     ScoreResponse,
 )
 from src.api.scoring import load_artifacts, score_transaction
 from src.common.config import get_settings
-from src.db.models import AuditLogEntry, Feedback
+from src.db.models import (
+    CONFIRMED_FRAUD,
+    FALSE_POSITIVE,
+    REQUESTED,
+    AuditLogEntry,
+    Feedback,
+    RetrainRun,
+)
 from src.db.session import create_tables, session_scope
 
 logging.basicConfig(
@@ -81,6 +97,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="GNN Fraud Detection - Scoring API", lifespan=lifespan)
+
+# The dashboard is a separate origin (Vite dev server / the nginx container),
+# so every dashboard call is preflighted. Origins come from config and are
+# explicit: allow_credentials with a wildcard is both forbidden by the spec and
+# exactly the hole that would let any page call this API with a live token.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+)
 
 
 @app.post("/score", response_model=ScoreResponse, dependencies=[Depends(require_api_key)])
@@ -153,6 +181,15 @@ def _write_audit_log(request: ScoreRequest, response: ScoreResponse) -> None:
                     },
                     model_version=response.model_version,
                     embedding_version=response.embedding_version,
+                    # Transaction detail the analyst queue shows on each row.
+                    # Copied from the request rather than re-fetched later:
+                    # the audit row is meant to be a complete record of what
+                    # was scored, readable without the source system.
+                    receiver_account_key=request.receiver_account_key,
+                    amount_paid=request.amount_paid,
+                    payment_currency=request.payment_currency,
+                    payment_format=request.payment_format,
+                    tx_timestamp=request.timestamp,
                 )
             )
     except Exception:
@@ -180,37 +217,135 @@ def login(request: LoginRequest) -> LoginResponse:
     )
 
 
+# The feedback row that decides a flag: latest decision per tx_id, so an
+# analyst changing their mind doesn't leave the queue showing the stale verdict.
+_LATEST_FEEDBACK = (
+    select(
+        Feedback.tx_id.label("tx_id"),
+        sql_func.max(Feedback.decided_at).label("decided_at"),
+    )
+    .group_by(Feedback.tx_id)
+    .subquery()
+)
+
+# The newest audit row per transaction.
+#
+# The audit log deliberately keeps *every* scoring event - re-streaming a
+# transaction writes a second row, and deleting that history would defeat the
+# point of an audit trail. But the queue is a worklist of transactions, not of
+# scoring events: without this, a transaction scored twice appeared in the
+# analyst's list twice (observed live: 179 rows for 177 transactions). Highest
+# id wins rather than latest `scored_at`, because two rows written in the same
+# instant would otherwise both survive.
+_LATEST_AUDIT = (
+    select(sql_func.max(AuditLogEntry.id).label("id"))
+    .where(AuditLogEntry.is_flagged.is_(True))
+    .group_by(AuditLogEntry.tx_id)
+    .subquery()
+)
+
+
 @app.get("/flags", response_model=FlagsResponse)
 def flags(
     _claims: Annotated[dict, Depends(require_user)],
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     since: datetime | None = None,
+    status_filter: Annotated[
+        Literal["open", "reviewed", "all"], Query(alias="status")
+    ] = "open",
+    min_score: Annotated[float, Query(ge=0.0, le=1.0)] = 0.0,
 ) -> FlagsResponse:
-    """The analyst queue: most recent flags first (Design Doc 4.2). Capped at
-    500 to keep the dashboard's <2s load target honest."""
-    query = select(AuditLogEntry).where(AuditLogEntry.is_flagged.is_(True))
+    """The analyst queue: highest risk first (Design Doc 4.2).
+
+    Left-joined to feedback so a reviewed flag carries its verdict and can
+    leave the default view - without it the queue grows forever and the
+    analyst loop never visibly closes. Capped at 500 to keep the dashboard's
+    load target honest.
+    """
+    query = (
+        select(AuditLogEntry, Feedback)
+        .join(_LATEST_AUDIT, AuditLogEntry.id == _LATEST_AUDIT.c.id)
+        .outerjoin(_LATEST_FEEDBACK, AuditLogEntry.tx_id == _LATEST_FEEDBACK.c.tx_id)
+        .outerjoin(
+            Feedback,
+            (Feedback.tx_id == _LATEST_FEEDBACK.c.tx_id)
+            & (Feedback.decided_at == _LATEST_FEEDBACK.c.decided_at),
+        )
+    )
     if since is not None:
         query = query.where(AuditLogEntry.scored_at >= since)
-    query = query.order_by(AuditLogEntry.scored_at.desc()).limit(limit)
+    if min_score > 0.0:
+        query = query.where(AuditLogEntry.score >= min_score)
+    if status_filter == "open":
+        query = query.where(_LATEST_FEEDBACK.c.tx_id.is_(None))
+    elif status_filter == "reviewed":
+        query = query.where(_LATEST_FEEDBACK.c.tx_id.is_not(None))
+
+    # Score-descending is the Design Doc default: the queue is a risk-ordered
+    # worklist, so the riskiest item must be reachable without paging.
+    query = query.order_by(AuditLogEntry.score.desc(), AuditLogEntry.scored_at.desc()).limit(limit)
 
     with session_scope() as session:
-        entries = list(session.scalars(query))
+        rows = list(session.execute(query))
+        summary = _queue_summary(session)
 
     return FlagsResponse(
-        flags=[
-            FlaggedTransaction(
-                tx_id=entry.tx_id,
-                account_key=entry.account_key,
-                score=entry.score,
-                is_flagged=entry.is_flagged,
-                model_version=entry.model_version,
-                embedding_version=entry.embedding_version,
-                scored_at=entry.scored_at,
-                explanation=(entry.explanation_json or {}).get("factors", []),
-            )
-            for entry in entries
-        ],
-        count=len(entries),
+        flags=[_to_flag(entry, decision) for entry, decision in rows],
+        count=len(rows),
+        summary=summary,
+    )
+
+
+def _to_flag(entry: AuditLogEntry, decision: Feedback | None) -> FlaggedTransaction:
+    return FlaggedTransaction(
+        tx_id=entry.tx_id,
+        account_key=entry.account_key,
+        score=entry.score,
+        is_flagged=entry.is_flagged,
+        model_version=entry.model_version,
+        embedding_version=entry.embedding_version,
+        scored_at=entry.scored_at,
+        explanation=(entry.explanation_json or {}).get("factors", []),
+        receiver_account_key=entry.receiver_account_key,
+        amount_paid=entry.amount_paid,
+        payment_currency=entry.payment_currency,
+        payment_format=entry.payment_format,
+        tx_timestamp=entry.tx_timestamp,
+        analyst_decision=decision.analyst_decision if decision else None,
+        decided_at=decision.decided_at if decision else None,
+        decided_by=decision.decided_by if decision else None,
+    )
+
+
+def _queue_summary(session) -> QueueSummary:
+    """Counts for the summary strip, over the whole audit log rather than the
+    returned page - a count that shrank when you changed page size would be
+    actively misleading."""
+    reviewed = select(Feedback.tx_id).distinct().scalar_subquery()
+    # Counts distinct transactions, matching what the list returns - a summary
+    # that said 179 above a list of 177 would undermine both numbers.
+    open_flags = session.scalar(
+        select(sql_func.count(sql_func.distinct(AuditLogEntry.tx_id)))
+        .select_from(AuditLogEntry)
+        .where(AuditLogEntry.is_flagged.is_(True), AuditLogEntry.tx_id.not_in(reviewed))
+    )
+
+    # "Today" is deliberately the last 24 hours rather than a calendar day:
+    # there is no per-user timezone in the MVP, and a rolling window is the
+    # same number for everyone looking at the demo.
+    since_cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)
+    decided = session.execute(
+        select(Feedback.analyst_decision, sql_func.count())
+        .where(Feedback.decided_at >= since_cutoff)
+        .group_by(Feedback.analyst_decision)
+    ).all()
+    counts = dict(decided)
+
+    return QueueSummary(
+        open_flags=open_flags or 0,
+        confirmed_today=counts.get(CONFIRMED_FRAUD, 0),
+        dismissed_today=counts.get(FALSE_POSITIVE, 0),
+        model_version=get_settings().model_version,
     )
 
 
@@ -243,14 +378,41 @@ def retrain(claims: Annotated[dict, Depends(require_operator)]) -> RetrainRespon
     """Operator-only. GNN training runs on Kaggle/Colab (locked compute
     decision), so for the MVP this returns a reference id and the steps rather
     than kicking off a job the API has no GPU to run - TRD 5.1 allows exactly
-    that. Nothing is persisted yet; a retrain-history table can come with the
-    dashboard's Model & Ops screen if it's wanted there.
+    that. The request is persisted to `retrain_runs` so the Model & Ops screen
+    shows real history - the row is a work order recording that an operator
+    asked for a retrain, not evidence that one ran.
     """
     job_id = f"retrain-{uuid.uuid4().hex[:12]}"
-    logger.info("retrain requested job_id=%s by=%s", job_id, claims.get("sub"))
+    requested_by = str(claims.get("sub", "unknown"))
+
+    # Record the request before returning it. Previously this was
+    # fire-and-forget, which left the Ops screen with nothing real to show;
+    # the row also captures *why* it was requested (how much unused feedback
+    # had accumulated) at the moment the operator decided.
+    with session_scope() as session:
+        pending = session.scalar(
+            select(sql_func.count())
+            .select_from(Feedback)
+            .where(Feedback.used_in_training_run.is_(None))
+        ) or 0
+        run = RetrainRun(
+            job_id=job_id,
+            status=REQUESTED,
+            requested_by=requested_by,
+            feedback_rows_pending=pending,
+        )
+        session.add(run)
+        session.flush()
+        requested_at = run.requested_at or dt.datetime.now(dt.UTC)
+
+    logger.info(
+        "retrain requested job_id=%s by=%s feedback_pending=%d", job_id, requested_by, pending
+    )
     return RetrainResponse(
         job_id=job_id,
-        status="accepted",
+        status=REQUESTED,
+        requested_at=requested_at,
+        feedback_rows_pending=pending,
         instructions=(
             "1) uv run --group gnn python -m src.models.gnn.train_graphsage "
             "--version <new_embedding_version>  "
@@ -262,6 +424,106 @@ def retrain(claims: Annotated[dict, Depends(require_operator)]) -> RetrainRespon
             "versions only after they clear the eval gate."
         ),
     )
+
+
+@app.get("/models", response_model=ModelsResponse)
+def models(_claims: Annotated[dict, Depends(require_user)]) -> ModelsResponse:
+    """Model & Ops data (Design Doc 4.4).
+
+    Every metric here was measured by an evaluation run and is read from that
+    run's `metrics.json` artifact - this endpoint computes no model quality
+    numbers of its own. Drift is reported as not-instrumented rather than
+    green, because Evidently is a later build step and a health light nobody
+    computed would be the exact dishonesty this project argues against.
+    """
+    settings = get_settings()
+    versions = list_versions()
+    baseline, gnn = baseline_and_gnn(versions)
+
+    reviewed, overrides = _feedback_totals()
+    recent = _recent_retrains()
+
+    return ModelsResponse(
+        serving_model_version=settings.model_version,
+        serving_embedding_version=settings.embedding_version,
+        flag_threshold=settings.flag_threshold,
+        versions=[
+            ModelVersionOut(
+                version=metrics.version,
+                auprc=metrics.auprc,
+                roc_auc=metrics.roc_auc,
+                test_rows=metrics.test_rows,
+                test_positives=metrics.test_positives,
+                best_f1_threshold=metrics.best_f1_threshold,
+                best_f1_precision=metrics.best_f1_precision,
+                best_f1_recall=metrics.best_f1_recall,
+                best_f1=metrics.best_f1,
+                embedding_version=metrics.embedding_version,
+                is_serving=metrics.version == settings.model_version,
+            )
+            for metrics in versions
+        ],
+        baseline_auprc=baseline.auprc if baseline else None,
+        gnn_auprc=gnn.auprc if gnn else None,
+        auprc_lift_pct=lift_pct(baseline, gnn),
+        # None, not 0.0, when nothing has been reviewed: "no analyst has ever
+        # disagreed" and "no analyst has ever looked" are different facts.
+        override_rate=(overrides / reviewed) if reviewed else None,
+        reviewed_count=reviewed,
+        drift=DriftStatus(
+            state="not_instrumented",
+            message=(
+                "Drift monitoring is not wired up yet - Evidently arrives in the "
+                "MLOps build step. No drift check has run, so no status is claimed."
+            ),
+        ),
+        recent_retrains=recent,
+    )
+
+
+def _feedback_totals() -> tuple[int, int]:
+    """(reviewed, overrides). An override is a flag the model raised and the
+    analyst rejected - the only live quality signal the MVP has."""
+    try:
+        with session_scope() as session:
+            reviewed = session.scalar(select(sql_func.count()).select_from(Feedback)) or 0
+            overrides = (
+                session.scalar(
+                    select(sql_func.count())
+                    .select_from(Feedback)
+                    .where(Feedback.analyst_decision == FALSE_POSITIVE)
+                )
+                or 0
+            )
+        return reviewed, overrides
+    except Exception:
+        # One panel's data being unavailable must not blank the Ops screen.
+        logger.exception("feedback totals unavailable")
+        return 0, 0
+
+
+def _recent_retrains(limit: int = 5) -> list[RetrainRunOut]:
+    try:
+        with session_scope() as session:
+            runs = list(
+                session.scalars(
+                    select(RetrainRun).order_by(RetrainRun.requested_at.desc()).limit(limit)
+                )
+            )
+        return [
+            RetrainRunOut(
+                job_id=run.job_id,
+                status=run.status,
+                requested_by=run.requested_by,
+                requested_at=run.requested_at,
+                feedback_rows_pending=run.feedback_rows_pending,
+                resulting_model_version=run.resulting_model_version,
+            )
+            for run in runs
+        ]
+    except Exception:
+        logger.exception("retrain history unavailable")
+        return []
 
 
 @app.get("/graph/{account_key}", response_model=GraphResponse)
