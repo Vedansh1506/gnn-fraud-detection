@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     transactions_topic: str = "transactions"
     scoring_api_base_url: str = "http://localhost:8000"
 
+    # The React dashboard is served from its own origin (Vite's dev server, or
+    # nginx in the compose stack), so the browser preflights every API call.
+    # Comma-separated and explicit - a wildcard would let any page a demo
+    # viewer has open call the API with their token.
+    cors_allowed_origins: str = "http://localhost:5173,http://localhost:4173"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+
     @field_validator("model_version", "embedding_version", mode="before")
     @classmethod
     def _blank_falls_back_to_default(cls, value: str | None, info: ValidationInfo) -> str:
