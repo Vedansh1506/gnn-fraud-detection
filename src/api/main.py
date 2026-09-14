@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from functools import lru_cache
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -61,6 +63,7 @@ from src.db.models import (
     RetrainRun,
 )
 from src.db.session import create_tables, session_scope
+from src.mlops.drift import check_drift
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -68,6 +71,10 @@ logging.basicConfig(
 logger = logging.getLogger("scoring")
 
 _state: dict[str, object] = {}
+
+# How long a computed drift report stays good for. Drift moves over hours, not
+# seconds; recomputing per request would make the Ops screen slow for no gain.
+DRIFT_CACHE_SECONDS = 300
 
 
 @asynccontextmanager
@@ -470,15 +477,42 @@ def models(_claims: Annotated[dict, Depends(require_user)]) -> ModelsResponse:
         # disagreed" and "no analyst has ever looked" are different facts.
         override_rate=(overrides / reviewed) if reviewed else None,
         reviewed_count=reviewed,
-        drift=DriftStatus(
-            state="not_instrumented",
-            message=(
-                "Drift monitoring is not wired up yet - Evidently arrives in the "
-                "MLOps build step. No drift check has run, so no status is claimed."
-            ),
-        ),
+        drift=_drift_status(settings.model_version),
         recent_retrains=recent,
     )
+
+
+def _drift_status(model_version: str) -> DriftStatus:
+    """Real drift, computed against the pinned reference (Design Doc 4.4).
+
+    Cached: an Evidently run over tens of thousands of rows is not something to
+    repeat on every page load, and drift is a slow-moving signal - a value
+    minutes old is still true. A failure here degrades this one panel and never
+    takes the Ops screen down.
+    """
+    try:
+        report = _cached_drift(model_version, _drift_cache_key())
+    except Exception:
+        logger.exception("drift check failed")
+        return DriftStatus(
+            state="not_instrumented",
+            message="The drift check could not be computed - see the service logs.",
+        )
+
+    return DriftStatus(
+        state=report.state, message=report.message, checked_at=report.checked_at
+    )
+
+
+def _drift_cache_key() -> int:
+    """Buckets time so the cached report refreshes on its own every few
+    minutes without needing a background scheduler."""
+    return int(time.time() // DRIFT_CACHE_SECONDS)
+
+
+@lru_cache(maxsize=4)
+def _cached_drift(model_version: str, _bucket: int):
+    return check_drift(model_version)
 
 
 def _feedback_totals() -> tuple[int, int]:

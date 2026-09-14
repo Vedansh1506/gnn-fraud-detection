@@ -20,7 +20,7 @@ import { motion } from 'motion/react'
 import { useAuth } from '../lib/auth'
 import { useModels, useTriggerRetrain } from '../lib/queries'
 import { messageFor, type ModelVersion } from '../lib/api'
-import { formatCount, formatMetric, formatPercent, MISSING } from '../lib/format'
+import { formatCount, formatMetric, formatPercent, formatRelative, MISSING } from '../lib/format'
 import { formatDateTime } from '../lib/format'
 import { Badge, Banner, Button, Card, CardHeader, Skeleton, cx } from '../components/ui'
 import { CountUp, StatTile } from '../components/StatTile'
@@ -368,22 +368,71 @@ function VersionTable({ versions }: { versions: ModelVersion[] }) {
   )
 }
 
-function DriftPanel({ drift }: { drift: { state: string; message: string } }) {
-  const notInstrumented = drift.state === 'not_instrumented'
+/**
+ * Each drift state gets its own treatment. Before real states existed this
+ * painted everything that wasn't "not measured" green - which would have shown
+ * an `alert` as healthy, the precise failure this panel exists to prevent.
+ */
+const DRIFT_STATES: Record<
+  string,
+  { icon: string; label: string; colorVar: string; softVar: string }
+> = {
+  ok: {
+    icon: '●',
+    label: 'No drift detected',
+    colorVar: 'var(--risk-good)',
+    softVar: 'var(--risk-good-soft)',
+  },
+  warning: {
+    icon: '▲',
+    label: 'Some drift',
+    colorVar: 'var(--risk-warning)',
+    softVar: 'var(--risk-warning-soft)',
+  },
+  alert: {
+    icon: '!',
+    label: 'Significant drift',
+    colorVar: 'var(--risk-critical)',
+    softVar: 'var(--risk-critical-soft)',
+  },
+  not_instrumented: {
+    icon: '○',
+    label: 'Not measured',
+    colorVar: 'var(--ink-muted)',
+    softVar: 'transparent',
+  },
+}
+
+function DriftPanel({
+  drift,
+}: {
+  drift: { state: string; message: string; checked_at: string | null }
+}) {
+  const tone = DRIFT_STATES[drift.state] ?? DRIFT_STATES.not_instrumented
 
   return (
     <Card>
-      <CardHeader title="Feature drift" description="Are live inputs still like training data?" />
+      <CardHeader
+        title="Feature drift"
+        description="Are live inputs still like the data the model was validated on?"
+      />
       <div className="px-5 py-4">
         <Badge
-          icon={notInstrumented ? '○' : '●'}
-          label={notInstrumented ? 'Not measured' : drift.state}
-          colorVar={notInstrumented ? 'var(--ink-muted)' : 'var(--risk-good)'}
-          softVar={notInstrumented ? 'transparent' : 'var(--risk-good-soft)'}
+          icon={tone.icon}
+          label={tone.label}
+          colorVar={tone.colorVar}
+          softVar={tone.softVar}
         />
         <p className="mt-3 text-[13px] leading-relaxed text-[var(--ink-secondary)]">
           {drift.message}
         </p>
+        {/* Absent when nothing was computed - and absent is the honest answer
+            there, rather than a timestamp implying a check that never ran. */}
+        {drift.checked_at && (
+          <p className="mt-2 text-[11px] text-[var(--ink-muted)]">
+            Checked {formatRelative(drift.checked_at)}
+          </p>
+        )}
       </div>
     </Card>
   )
