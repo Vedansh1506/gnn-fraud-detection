@@ -444,7 +444,13 @@ function RetrainPanel({
   pendingHint,
 }: {
   isOperator: boolean
-  recent: { job_id: string; status: string; requested_by: string; requested_at: string }[]
+  recent: {
+    job_id: string
+    status: string
+    requested_by: string
+    requested_at: string
+    resulting_model_version: string | null
+  }[]
   pendingHint: number
 }) {
   const [confirming, setConfirming] = useState(false)
@@ -514,11 +520,14 @@ function RetrainPanel({
             <p className="mb-2 text-[11px] font-medium tracking-wide text-[var(--ink-muted)] uppercase">
               Recent requests
             </p>
-            <ul className="space-y-1.5">
+            <ul className="space-y-2">
               {recent.map((run) => (
                 <li key={run.job_id} className="flex items-center justify-between gap-3 text-[12px]">
-                  <span className="identifier truncate text-[var(--ink-secondary)]">
-                    {run.job_id}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <RetrainStatus status={run.status} />
+                    <span className="identifier truncate text-[var(--ink-secondary)]">
+                      {run.resulting_model_version ?? run.job_id}
+                    </span>
                   </span>
                   <span className="shrink-0 text-[var(--ink-muted)]">
                     {run.requested_by} · {formatDateTime(run.requested_at)}
@@ -530,6 +539,32 @@ function RetrainPanel({
         )}
       </div>
     </Card>
+  )
+}
+
+/**
+ * An open request and a finished one are different facts, and the list showed
+ * them identically. "Requested" deliberately reads as neutral rather than
+ * positive - nothing has happened yet, and the API cannot make it happen.
+ */
+function RetrainStatus({ status }: { status: string }) {
+  const tone =
+    status === 'completed'
+      ? { icon: '✓', colorVar: 'var(--risk-good)', softVar: 'var(--risk-good-soft)' }
+      : status === 'failed'
+        ? { icon: '!', colorVar: 'var(--risk-critical)', softVar: 'var(--risk-critical-soft)' }
+        : status === 'running'
+          ? { icon: '◐', colorVar: 'var(--accent)', softVar: 'var(--accent-soft)' }
+          : { icon: '○', colorVar: 'var(--ink-muted)', softVar: 'transparent' }
+
+  return (
+    <Badge
+      icon={tone.icon}
+      label={status}
+      colorVar={tone.colorVar}
+      softVar={tone.softVar}
+      className="shrink-0 capitalize"
+    />
   )
 }
 

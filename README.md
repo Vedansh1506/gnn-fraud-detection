@@ -136,6 +136,8 @@ uv run python -m src.db.seed_users --username ops --role operator
 # 5. MLOps: record the trained models and build the drift reference
 uv run python -m src.mlops.backfill              # logs existing versions to MLflow
 uv run python -m src.mlops.build_reference       # drift baseline for the pinned model
+# after an offline retrain, record what it produced:
+#   uv run python -m src.mlops.close_retrain --latest --model-version gnn_v3
 
 # 6. Run it
 uv run uvicorn src.api.main:app --port 8000     # API       -> localhost:8000/docs
@@ -184,7 +186,7 @@ Interactive docs at `localhost:8000/docs`.
 ## Testing
 
 ```bash
-uv run pytest tests/ -q        # 135 tests
+uv run pytest tests/ -q        # 145 tests
 uv run ruff check src/ tests/
 cd frontend && npm run build   # typecheck + production bundle
 ```
@@ -221,7 +223,7 @@ Things a reviewer would find anyway, stated up front:
 - **Drift monitoring covers transaction attributes and the score, not the embeddings.** The audit log stores what was scored, not the model's 83-column feature vector, so `amount`, `payment_format`, `hour_of_day` and the prediction are compared — the 64 embedding dimensions are not. The panel says so rather than implying full coverage.
 - **A drift verdict needs a representative replay.** A short replay covers minutes of transaction time and would report its own narrow window as drift (measured: 20,000 events spanning 0.3 hours put every row in one clock hour). Below a 6-hour span the check reports "too narrow to judge" instead of a verdict.
 - **MLflow runs for the three existing models are backfilled**, tagged `backfilled=true` and marked as such: they were logged from artifacts after the fact, not observed live. Training is instrumented going forward.
-- **`/retrain` records a work order, it does not train.** GNN training runs offline on GPU by design, so the API has no GPU — the UI says so instead of implying a job started.
+- **`/retrain` records a work order, it does not train.** GNN training runs offline on GPU by design, so the API has no GPU — the UI says so instead of implying a job started. The operator closes the run out afterwards with `src.mlops.close_retrain`, which records the resulting version and stamps the analyst feedback that retrain consumed.
 - **Schema migrations are minimal.** A small helper adds *nullable* columns at startup and deliberately refuses anything more (NOT NULL, renames, backfills). That refusal is the signal to adopt Alembic.
 - **Desktop-first.** This is an internal analyst workstation tool; it degrades to tablet and is not designed for phones.
 
@@ -251,11 +253,11 @@ src/
 ├── features/     Leakage-free feature engineering (fit on train, apply at serve)
 ├── graph/        Neo4j client, schema, batch loader
 ├── streaming/    Kafka-API producer + consumer (consumer owns graph writes)
-├── mlops/        MLflow tracking + Evidently drift (reference builder, backfill)
+├── mlops/        MLflow tracking, Evidently drift, retrain close-out
 ├── db/           SQLAlchemy models, session wiring, user seeding
 └── common/       Env-var configuration
 frontend/         React dashboard (Vite build, nginx image)
-tests/            135 tests; integration tests skip if infra is down
+tests/            145 tests; integration tests skip if infra is down
 ```
 
 ---
