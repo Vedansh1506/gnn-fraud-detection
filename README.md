@@ -103,6 +103,8 @@ IBM AML LI-Small (6.9M tx)                  Producer ──► Redpanda ──�
 | **Graph store** | Neo4j |
 | **Relational** | PostgreSQL |
 | **Streaming** | Redpanda (Kafka API) |
+| **Experiment tracking** | MLflow (self-hosted, Postgres-backed) |
+| **Drift monitoring** | Evidently |
 | **Auth** | JWT (PyJWT) + bcrypt; static API key for service-to-service |
 | **Infra** | Docker Compose, uv, ruff, pytest |
 
@@ -114,7 +116,7 @@ Requires Docker Desktop, Python 3.11 and Node 20.
 
 ```bash
 # 1. Infrastructure
-docker compose up -d neo4j postgres redpanda
+docker compose up -d neo4j postgres redpanda mlflow
 
 # 2. Python deps
 uv sync
@@ -131,9 +133,14 @@ uv run python -m src.models.classifier.evaluate --version gnn_v2
 uv run python -m src.db.seed_users --username analyst --role analyst
 uv run python -m src.db.seed_users --username ops --role operator
 
-# 5. Run it
-uv run uvicorn src.api.main:app --port 8000     # API      -> localhost:8000/docs
+# 5. MLOps: record the trained models and build the drift reference
+uv run python -m src.mlops.backfill              # logs existing versions to MLflow
+uv run python -m src.mlops.build_reference       # drift baseline for the pinned model
+
+# 6. Run it
+uv run uvicorn src.api.main:app --port 8000     # API       -> localhost:8000/docs
 cd frontend && npm install && npm run dev       # dashboard -> localhost:5173
+                                                # MLflow    -> localhost:5500
 ```
 
 Then replay live traffic — **start the producer first**, the consumer exits after 15s of silence:
@@ -151,6 +158,7 @@ Copy `.env.example` to `.env`. Two things bite people:
 
 - **Postgres is on host port 5433**, not 5432 — a local PostgreSQL install commonly owns 5432 and Docker *silently fails to publish* rather than erroring.
 - **The dashboard must run on port 5173** — it's in the API's CORS allowlist, and Vite is pinned with `strictPort` so a clash fails loudly instead of drifting to 5174 and breaking only in the browser.
+- **MLflow is on host port 5500**, not its usual 5000. On Windows 5000 is commonly reserved (binding fails with `WinError 10013`) and Docker publishes it *without erroring* — the container looks healthy while nothing can reach it.
 
 ---
 
@@ -176,7 +184,7 @@ Interactive docs at `localhost:8000/docs`.
 ## Testing
 
 ```bash
-uv run pytest tests/ -q        # 109 tests
+uv run pytest tests/ -q        # 135 tests
 uv run ruff check src/ tests/
 cd frontend && npm run build   # typecheck + production bundle
 ```
@@ -210,7 +218,9 @@ Things a reviewer would find anyway, stated up front:
 
 - **The lift is modest.** +0.002 AUPRC absolute, and ROC-AUC regressed. See the caveats above.
 - **The JWT lives in `sessionStorage`.** XSS could steal it. The correct fix is an httpOnly cookie with CSRF protection (or Cognito); that's a backend change beyond this MVP's scope. `sessionStorage` over `localStorage` bounds exposure to the tab's lifetime, and tokens expire server-side in 60 minutes.
-- **Drift monitoring is not instrumented yet.** The Ops screen renders an explicit "Not measured" rather than a green light nobody computed.
+- **Drift monitoring covers transaction attributes and the score, not the embeddings.** The audit log stores what was scored, not the model's 83-column feature vector, so `amount`, `payment_format`, `hour_of_day` and the prediction are compared — the 64 embedding dimensions are not. The panel says so rather than implying full coverage.
+- **A drift verdict needs a representative replay.** A short replay covers minutes of transaction time and would report its own narrow window as drift (measured: 20,000 events spanning 0.3 hours put every row in one clock hour). Below a 6-hour span the check reports "too narrow to judge" instead of a verdict.
+- **MLflow runs for the three existing models are backfilled**, tagged `backfilled=true` and marked as such: they were logged from artifacts after the fact, not observed live. Training is instrumented going forward.
 - **`/retrain` records a work order, it does not train.** GNN training runs offline on GPU by design, so the API has no GPU — the UI says so instead of implying a job started.
 - **Schema migrations are minimal.** A small helper adds *nullable* columns at startup and deliberately refuses anything more (NOT NULL, renames, backfills). That refusal is the signal to adopt Alembic.
 - **Desktop-first.** This is an internal analyst workstation tool; it degrades to tablet and is not designed for phones.
@@ -241,10 +251,11 @@ src/
 ├── features/     Leakage-free feature engineering (fit on train, apply at serve)
 ├── graph/        Neo4j client, schema, batch loader
 ├── streaming/    Kafka-API producer + consumer (consumer owns graph writes)
+├── mlops/        MLflow tracking + Evidently drift (reference builder, backfill)
 ├── db/           SQLAlchemy models, session wiring, user seeding
 └── common/       Env-var configuration
 frontend/         React dashboard (Vite build, nginx image)
-tests/            109 tests; integration tests skip if infra is down
+tests/            135 tests; integration tests skip if infra is down
 ```
 
 ---
