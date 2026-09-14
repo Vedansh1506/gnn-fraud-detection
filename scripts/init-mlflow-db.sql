@@ -1,0 +1,11 @@
+-- Creates the database MLflow keeps its tracking schema in.
+--
+-- Runs only on a FRESH Postgres volume (Docker skips /docker-entrypoint-initdb.d
+-- entirely once the data directory exists). On an already-initialised setup,
+-- create it once by hand instead:
+--   docker exec postgres psql -U <user> -d postgres -c "CREATE DATABASE mlflow"
+--
+-- Separate from the application database on purpose: MLflow owns and migrates
+-- its own schema, and mixing it with audit_log/feedback would tie the two
+-- together for no benefit.
+CREATE DATABASE mlflow;

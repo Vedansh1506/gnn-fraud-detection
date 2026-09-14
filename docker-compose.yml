@@ -66,6 +66,8 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Runs only when the volume is empty; see the mlflow service's note.
+      - ./scripts/init-mlflow-db.sql:/docker-entrypoint-initdb.d/init-mlflow-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -88,6 +90,33 @@ services:
       - neo4j
       - redpanda
 
+  mlflow:
+    # C11, experiment tracking. Backed by the same Postgres instance but its
+    # own `mlflow` database - MLflow manages its own schema, and letting it
+    # create tables alongside audit_log/feedback would tangle two migration
+    # stories together.
+    #
+    # The database is created by `scripts/init-mlflow-db.sql` on a *fresh*
+    # Postgres volume. An already-initialised volume skips init scripts
+    # entirely, so on an existing setup create it once by hand:
+    #   docker exec postgres psql -U $POSTGRES_USER -d postgres -c "CREATE DATABASE mlflow"
+    image: ghcr.io/mlflow/mlflow:v3.16.0
+    container_name: mlflow
+    # One line on purpose. In a YAML folded scalar (`>`) any line indented
+    # MORE than the first keeps its newline, and inside `sh -c "..."` a newline
+    # is a command separator - so a prettily-wrapped version silently ran bare
+    # `mlflow server` with its defaults (loopback bind, local file store) and
+    # every flag below as a separate failing command. The container looked
+    # healthy and was unreachable.
+    command: sh -c "pip install --no-cache-dir psycopg2-binary >/dev/null 2>&1 && exec mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow --default-artifact-root /mlflow/artifacts"
+    ports:
+      - "${MLFLOW_PORT:-5500}:5000"
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   frontend:
     # C10, the React dashboard (replaced Streamlit on 2026-09-13).
     build:
@@ -107,3 +136,4 @@ volumes:
   neo4j_data:
   redpanda_data:
   postgres_data:
+  mlflow_artifacts:

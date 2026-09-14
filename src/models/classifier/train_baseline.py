@@ -15,6 +15,7 @@ from pathlib import Path
 
 import xgboost as xgb
 
+from src.mlops import tracking
 from src.models.classifier.dataset import (
     CATEGORICAL_COLUMNS,
     Dataset,
@@ -118,8 +119,36 @@ def main(limit: int | None, version: str, embeddings: Path | None) -> None:
     )
     print(f"scale_pos_weight (train only): {dataset.scale_pos_weight:,.1f}")
 
-    model = train(dataset)
-    out_dir = save_artifacts(model, dataset, version, embeddings)
+    # Tracking wraps training rather than replacing any of it: if MLflow is
+    # down this logs a warning and the run proceeds untracked, because losing a
+    # trained model to a bookkeeping outage would be absurd.
+    with tracking.training_run(version, tags={"stage": "train"}):
+        model = train(dataset)
+        out_dir = save_artifacts(model, dataset, version, embeddings)
+
+        spec = tracking.read_spec(version)
+        tracking.log_params(
+            {
+                **tracking.params_from_spec(spec),
+                **{f"xgb_{key}": value for key, value in PARAMS.items()},
+                "num_boost_round": NUM_BOOST_ROUND,
+                "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
+                "limit": limit if limit is not None else "full",
+            }
+        )
+        # Training-time metrics only. The headline numbers come from evaluate.py
+        # against the held-out window and are logged there - reporting a
+        # training-set score as the result is the classic way to look good and
+        # be wrong.
+        tracking.log_metrics(
+            {
+                "val_rows": float(len(dataset.y_val)),
+                "val_positives": float(dataset.y_val.sum()),
+                "best_iteration": float(model.best_iteration),
+            }
+        )
+        tracking.log_artifact(out_dir / "feature_spec.json")
+
     print(f"Best iteration: {model.best_iteration}")
     print(f"Wrote artifacts to {out_dir}/")
     print("Run evaluate.py for held-out test metrics.")

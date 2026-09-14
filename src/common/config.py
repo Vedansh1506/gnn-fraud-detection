@@ -45,6 +45,25 @@ class Settings(BaseSettings):
     # viewer has open call the API with their token.
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:4173"
 
+    # Experiment tracking. Self-hosted MLflow (compose service `mlflow`), so
+    # training runs are recorded somewhere durable rather than only in the
+    # artifact directory.
+    # 5500, not MLflow's usual 5000: on Windows 5000 is commonly reserved
+    # (bind fails with WinError 10013) and Docker publishes it *without
+    # erroring*, so the server looks healthy while nothing can reach it.
+    mlflow_tracking_uri: str = "http://localhost:5500"
+    mlflow_experiment: str = "fraud-detection"
+
+    # Drift monitoring. `drift_min_rows` exists because a drift verdict off a
+    # handful of transactions is noise presented as a signal - below this the
+    # check reports "not enough data" instead of a colour.
+    drift_min_rows: int = 200
+    # Share of monitored columns that must drift before the overall verdict
+    # escalates. Evidently's own dataset-drift default is 0.5; warning earlier
+    # suits a demo where drift is worth noticing before it is overwhelming.
+    drift_warning_share: float = 0.25
+    drift_alert_share: float = 0.5
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
