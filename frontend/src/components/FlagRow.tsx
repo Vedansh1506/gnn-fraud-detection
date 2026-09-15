@@ -17,7 +17,8 @@ import {
   formatScore,
   shortAccount,
 } from '../lib/format'
-import { Badge, Button, cx } from './ui'
+import { Badge, Button } from './ui'
+import { cx } from '../lib/cx'
 
 export function FlagRow({
   flag,

@@ -1,5 +1,7 @@
 # Graph-Based Fraud & Mule Detection Platform
 
+[![CI](https://github.com/Vedansh1506/gnn-fraud-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/Vedansh1506/gnn-fraud-detection/actions/workflows/ci.yml)
+
 Real-time money-laundering detection that models accounts and payments as a **graph**, learns account risk embeddings with a **GraphSAGE GNN**, fuses them into an **XGBoost** classifier for sub-second transaction scoring, explains every flag with **SHAP**, and closes the loop with analyst feedback.
 
 Built end-to-end: streaming ingestion → graph store → offline GNN → online scoring API → analyst dashboard.
@@ -186,10 +188,20 @@ Interactive docs at `localhost:8000/docs`.
 ## Testing
 
 ```bash
-uv run pytest tests/ -q        # 145 tests
+uv run pytest tests/ -q -rs    # 145 tests (-rs shows why any skipped)
 uv run ruff check src/ tests/
+cd frontend && npm test        # 26 frontend tests
 cd frontend && npm run build   # typecheck + production bundle
 ```
+
+**What the CI badge does and does not verify.** CI runs the linters, the full
+Python suite against real Postgres and Neo4j service containers, the frontend
+tests, and a production build. It does **not** verify the model: the evaluation
+gate (`test_real_artifacts_reproduce_the_documented_lift`) needs
+`artifacts/models/*/metrics.json`, which is git-ignored and derived from a
+650 MB dataset, so it skips in CI and must be run locally before promoting a
+model. That test is deliberately kept in the suite rather than deleted to make
+CI green — it is what stands between a bad retrain and the demo.
 
 Tests are weighted toward the failure modes that actually threaten this project rather than coverage for its own sake:
 

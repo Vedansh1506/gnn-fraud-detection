@@ -1,0 +1,175 @@
+name: CI
+
+# Lint + tests on every push and PR to main.
+#
+# WHAT THIS PIPELINE DOES AND DOES NOT VERIFY - read before trusting a green badge.
+#
+# It verifies: linting, the Python unit + integration suites (real Postgres and
+# Neo4j run as service containers), API contract validation, and that the
+# frontend typechecks, tests and builds.
+#
+# It does NOT verify the model. The evaluation gate
+# (`test_real_artifacts_reproduce_the_documented_lift`) needs
+# `artifacts/models/*/metrics.json`, which is git-ignored and derives from a
+# 650 MB dataset - so it skips here and must be run locally before promoting a
+# model. That test is deliberately left in the suite rather than deleted to
+# make CI green: it is the eval gate rules.md asks for, and it is the thing
+# standing between a bad retrain and the demo.
+#
+# Skips are printed with `-rs` so "skipped" can never quietly become "passed".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push makes an in-flight run irrelevant; don't pay for both.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+
+jobs:
+  python:
+    name: Python — lint & tests
+    runs-on: ubuntu-latest
+
+    services:
+      # Real services rather than mocks: the behaviour under test in the queue
+      # and schema suites *is* the SQL, and a mocked session would assert
+      # nothing about the part that can actually be wrong.
+      postgres:
+        image: postgres:16.15-alpine
+        env:
+          POSTGRES_DB: fraud_detection
+          POSTGRES_USER: fraud_app
+          POSTGRES_PASSWORD: ci-not-a-real-secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fraud_app -d fraud_detection"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      neo4j:
+        image: neo4j:5.26.25-community
+        env:
+          NEO4J_AUTH: neo4j/ci-not-a-real-secret
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # Note 5432, not the 5433 used locally: the local port only differs
+      # because a host PostgreSQL install commonly owns 5432. In CI nothing
+      # competes for it.
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: fraud_detection
+      POSTGRES_USER: fraud_app
+      POSTGRES_PASSWORD: ci-not-a-real-secret
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ci-not-a-real-secret
+      # Throwaway CI values. Real credentials are generated at deploy time and
+      # never live in the repo.
+      JWT_SECRET_KEY: ci-only-value-not-used-anywhere-real
+      SERVICE_API_KEY: ci-only-value
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        # Installed via the official script rather than a marketplace action:
+        # one less third-party dependency in the supply chain of a pipeline
+        # whose whole job is to be trustworthy.
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+        # --frozen: fail if uv.lock is out of date with pyproject.toml rather
+        # than silently resolving something different from local.
+
+      - name: Lint
+        run: uv run ruff check src/ tests/
+
+      - name: Tests
+        # -rs lists skip reasons, so a service that failed to come up shows up
+        # as a visible skip instead of an invisible reduction in coverage.
+        run: uv run pytest tests/ -q -rs
+
+  frontend:
+    name: Frontend — lint, test & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        # `npm run build` is `tsc -b && vite build`, so this is the typecheck
+        # as well as the bundle.
+        run: npm run build
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: No .env committed
+        # .gitignore already excludes it; this asserts nobody has forced it in.
+        run: |
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "::error::.env is tracked by git. Remove it and rotate every credential it held."
+            exit 1
+          fi
+          echo "OK: .env is not tracked."
+
+      - name: No obvious secrets in tracked files
+        # A deliberately small, dependency-free net for the highest-signal
+        # patterns. GitHub's native push protection is the primary control
+        # (enable it in Settings -> Code security); this is the backstop that
+        # runs even if that is off.
+        run: |
+          set +e
+          PATTERN='BEGIN (RSA|OPENSSH|DSA|EC|PGP) PRIVATE KEY|AKIA[0-9A-Z]{16}|aws_secret_access_key\s*=\s*[A-Za-z0-9/+=]{40}'
+          MATCHES=$(git ls-files -z \
+            | xargs -0 grep -nEI "$PATTERN" -- 2>/dev/null \
+            | grep -v '^\.github/workflows/ci\.yml:')
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Possible secret material in tracked files:"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "OK: no private keys or AWS access keys found in tracked files."

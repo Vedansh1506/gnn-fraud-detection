@@ -8,7 +8,7 @@
 
 import { animate, useMotionValue, useTransform, motion } from 'motion/react'
 import { useEffect } from 'react'
-import { cx } from './ui'
+import { cx } from '../lib/cx'
 
 export function StatTile({
   label,

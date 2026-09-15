@@ -6,10 +6,7 @@
 
 import { motion } from 'motion/react'
 import type { ReactNode } from 'react'
-
-export function cx(...parts: (string | false | null | undefined)[]): string {
-  return parts.filter(Boolean).join(' ')
-}
+import { cx } from '../lib/cx'
 
 /* ---------------------------------------------------------------- surfaces */
 

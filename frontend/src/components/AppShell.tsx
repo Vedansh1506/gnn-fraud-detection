@@ -11,7 +11,8 @@ import { motion } from 'motion/react'
 import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
 import { useHealth } from '../lib/queries'
-import { Badge, Button, cx } from './ui'
+import { Badge, Button } from './ui'
+import { cx } from '../lib/cx'
 
 const NAV = [
   { to: '/queue', label: 'Flag Queue', icon: '◧', operatorOnly: false },

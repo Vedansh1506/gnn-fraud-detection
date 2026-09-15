@@ -7,19 +7,26 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+#
+# These are ANCHORED to the repo root with a leading slash. Unanchored, they
+# match at ANY depth - and `lib/` silently swallowed `frontend/src/lib/`, so
+# the entire API client, auth, risk and formatting layer was missing from the
+# repo while `git status` reported clean. A fresh clone could not build the
+# frontend. Keep the leading slashes; this is a polyglot repo, and Python
+# packaging patterns must not reach into it.
 .Python
-build/
+/build/
 develop-eggs/
-dist/
-downloads/
-eggs/
+/dist/
+/downloads/
+/eggs/
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
