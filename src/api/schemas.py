@@ -168,6 +168,10 @@ class ModelVersionOut(BaseModel):
     best_f1: float
     is_serving: bool
     embedding_version: str | None = None
+    # Features this version was trained WITHOUT (ablation runs). The UI must
+    # label these, or an ablation row reads as a normal model that simply
+    # scored badly.
+    dropped_features: list[str] = []
 
 
 class DriftStatus(BaseModel):

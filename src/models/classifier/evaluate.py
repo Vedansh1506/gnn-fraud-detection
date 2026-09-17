@@ -63,10 +63,18 @@ def main(version: str) -> None:
     # evaluated through one code path on one split.
     spec = json.loads((ARTIFACTS_ROOT / version / "feature_spec.json").read_text())
     embeddings_path = spec.get("embeddings_path")
-    dataset = build_dataset(embeddings_path=Path(embeddings_path) if embeddings_path else None)
+    # Ablation runs record which features they were trained without; evaluating
+    # them against the full feature set would be measuring a different model.
+    dropped = tuple(spec.get("dropped_features") or ())
+    dataset = build_dataset(
+        embeddings_path=Path(embeddings_path) if embeddings_path else None,
+        drop_features=dropped,
+    )
     model = load_model(version)
     metrics = evaluate(model, dataset.x_test, dataset.y_test)
     metrics["model_version"] = version
+    if dropped:
+        metrics["dropped_features"] = list(dropped)
 
     out_path: Path = ARTIFACTS_ROOT / version / "metrics.json"
     out_path.write_text(json.dumps(metrics, indent=2))

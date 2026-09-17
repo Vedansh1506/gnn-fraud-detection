@@ -263,6 +263,13 @@ mlartifacts/
 volumes/
 
 
+# --- MLflow ---
+# Local tracking store. MLflow falls back to a SQLite file when the tracking
+# server is unreachable (e.g. Docker not running), so this appears without
+# anyone asking for it. Runs belong in the self-hosted server, not the repo.
+mlflow.db
+mlruns/
+
 # --- Frontend (React dashboard) ---
 node_modules/
 frontend/dist/

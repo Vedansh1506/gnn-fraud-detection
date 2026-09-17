@@ -37,6 +37,21 @@ class VersionMetrics:
     best_f1_recall: float
     best_f1: float
     embedding_version: str | None
+    # Features this version was trained WITHOUT. Empty for the main models;
+    # populated for ablation runs. Comparisons must only be made within a
+    # matching set - see `baseline_and_gnn`.
+    dropped_features: tuple[str, ...] = ()
+
+
+def _read_spec(version_dir: Path) -> dict:
+    spec_path = version_dir / "feature_spec.json"
+    if not spec_path.exists():
+        return {}
+    try:
+        return json.loads(spec_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        logger.warning("unreadable feature_spec.json in %s", version_dir, exc_info=True)
+        return {}
 
 
 def _read_embedding_version(version_dir: Path) -> str | None:
@@ -48,16 +63,7 @@ def _read_embedding_version(version_dir: Path) -> str | None:
     no embeddings - and is what separates the two sides of the headline
     comparison.
     """
-    spec_path = version_dir / "feature_spec.json"
-    if not spec_path.exists():
-        return None
-    try:
-        spec = json.loads(spec_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        logger.warning("unreadable feature_spec.json in %s", version_dir, exc_info=True)
-        return None
-
-    embeddings_path = spec.get("embeddings_path")
+    embeddings_path = _read_spec(version_dir).get("embeddings_path")
     if not embeddings_path:
         return None
     return Path(embeddings_path).parent.name
@@ -86,6 +92,7 @@ def _load_one(version_dir: Path) -> VersionMetrics | None:
             best_f1_recall=float(operating_point["recall"]),
             best_f1=float(operating_point["f1"]),
             embedding_version=_read_embedding_version(version_dir),
+            dropped_features=tuple(_read_spec(version_dir).get("dropped_features") or ()),
         )
     except (KeyError, TypeError, ValueError):
         # A half-written metrics file is a real possibility mid-training run.
@@ -104,17 +111,31 @@ def list_versions(root: Path = ARTIFACTS_ROOT) -> list[VersionMetrics]:
 
 def baseline_and_gnn(
     versions: list[VersionMetrics],
+    dropped_features: tuple[str, ...] = (),
 ) -> tuple[VersionMetrics | None, VersionMetrics | None]:
-    """Pick the pair behind the headline lift number.
+    """Pick the pair behind a headline lift number.
 
     "Baseline" is the best version trained without embeddings and "GNN" the
     best with them, which is exactly the comparison the project claims: same
     data, same split, embeddings as the only difference.
+
+    **Only versions with a matching `dropped_features` set are eligible.**
+    Without that filter an ablation run could be paired against a full-feature
+    model, and the resulting "lift" would be measuring two changes at once
+    while presenting itself as one. Defaults to the full-feature comparison,
+    which is the project's headline.
     """
-    tabular = [m for m in versions if m.embedding_version is None]
-    fused = [m for m in versions if m.embedding_version is not None]
+    eligible = [m for m in versions if m.dropped_features == dropped_features]
+    tabular = [m for m in eligible if m.embedding_version is None]
+    fused = [m for m in eligible if m.embedding_version is not None]
     best = lambda group: max(group, key=lambda m: m.auprc) if group else None  # noqa: E731
     return best(tabular), best(fused)
+
+
+def ablation_sets(versions: list[VersionMetrics]) -> list[tuple[str, ...]]:
+    """Every distinct non-empty `dropped_features` set present, so callers can
+    enumerate the ablations without hardcoding which were run."""
+    return sorted({m.dropped_features for m in versions if m.dropped_features})
 
 
 def lift_pct(baseline: VersionMetrics | None, gnn: VersionMetrics | None) -> float | None:

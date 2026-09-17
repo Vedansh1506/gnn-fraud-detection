@@ -336,6 +336,16 @@ function VersionTable({ versions }: { versions: ModelVersion[] }) {
               <td className="px-5 py-3">
                 <div className="flex items-center gap-2">
                   <span className="identifier text-[var(--ink)]">{version.version}</span>
+                  {version.dropped_features.length > 0 && (
+                    // An ablation row would otherwise read as a normal model
+                    // that simply scored badly.
+                    <Badge
+                      icon="−"
+                      label={`no ${version.dropped_features.join(', ')}`}
+                      colorVar="var(--ink-muted)"
+                      softVar="var(--surface-hover)"
+                    />
+                  )}
                   {version.is_serving && (
                     <Badge
                       icon="●"

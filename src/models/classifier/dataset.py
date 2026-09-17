@@ -12,6 +12,7 @@ laundering-labelled positives, not equal row counts.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,18 +43,30 @@ def embedding_columns(embeddings: pd.DataFrame) -> list[str]:
     return [c for c in embeddings.columns if c.startswith("emb_")]
 
 
-def feature_columns_with_embeddings(embeddings: pd.DataFrame | None) -> list[str]:
+def feature_columns_with_embeddings(
+    embeddings: pd.DataFrame | None, drop_features: Sequence[str] = ()
+) -> list[str]:
     """The baseline and the GNN-augmented model differ only by these columns -
     everything else about the pipeline is deliberately identical, so the AUPRC
-    comparison isolates the embeddings and nothing else."""
-    if embeddings is None:
-        return list(FEATURE_COLUMNS)
-    emb = embedding_columns(embeddings)
-    return (
-        list(FEATURE_COLUMNS)
-        + [f"sender_{c}" for c in emb]
-        + [f"receiver_{c}" for c in emb]
-    )
+    comparison isolates the embeddings and nothing else.
+
+    `drop_features` supports ablation runs (dropping a feature and remeasuring
+    the lift). It must be applied identically to both halves of a comparison,
+    which is why it is recorded in `feature_spec.json` rather than passed ad hoc
+    at evaluation time.
+    """
+    columns = list(FEATURE_COLUMNS)
+    if embeddings is not None:
+        emb = embedding_columns(embeddings)
+        columns += [f"sender_{c}" for c in emb] + [f"receiver_{c}" for c in emb]
+
+    unknown = set(drop_features) - set(columns)
+    if unknown:
+        # A typo'd feature name would otherwise silently drop nothing and
+        # produce an "ablation" identical to the original model.
+        raise ValueError(f"Cannot drop unknown feature(s): {sorted(unknown)}")
+
+    return [c for c in columns if c not in set(drop_features)]
 
 
 def join_embeddings(
@@ -86,6 +99,10 @@ class Dataset:
     y_test: pd.Series
     account_features: pd.DataFrame
     feature_columns: list[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
+    # Only the categoricals actually present. An ablation that drops
+    # `payment_format` must not leave it listed here, or saving artifacts fails
+    # reaching for a `.cat` accessor on a column that no longer exists.
+    categorical_columns: list[str] = field(default_factory=lambda: list(CATEGORICAL_COLUMNS))
 
     @property
     def scale_pos_weight(self) -> float:
@@ -132,7 +149,8 @@ def build_features(
         features = join_embeddings(features, embeddings, "sender")
         features = join_embeddings(features, embeddings, "receiver")
     for column in CATEGORICAL_COLUMNS:
-        features[column] = features[column].astype("category")
+        if column in features.columns:
+            features[column] = features[column].astype("category")
     return features
 
 
@@ -140,13 +158,14 @@ def build_dataset(
     path: Path = DEFAULT_TRANSACTIONS_PATH,
     limit: int | None = None,
     embeddings_path: Path | None = None,
+    drop_features: Sequence[str] = (),
 ) -> Dataset:
     df = load_transactions(path, limit=limit)
     train_df, val_df, test_df = split_by_time(df)
     _require_non_empty_splits(train_df, val_df, test_df)
 
     embeddings = pd.read_parquet(embeddings_path) if embeddings_path else None
-    columns = feature_columns_with_embeddings(embeddings)
+    columns = feature_columns_with_embeddings(embeddings, drop_features)
 
     # Fitted on train only - this is the whole point (see module docstring).
     account_features = fit_account_features(train_df)
@@ -160,4 +179,5 @@ def build_dataset(
         y_test=test_df["Is Laundering"].astype(int).reset_index(drop=True),
         account_features=account_features,
         feature_columns=columns,
+        categorical_columns=[c for c in CATEGORICAL_COLUMNS if c in columns],
     )

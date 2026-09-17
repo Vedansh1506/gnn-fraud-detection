@@ -17,7 +17,6 @@ import xgboost as xgb
 
 from src.mlops import tracking
 from src.models.classifier.dataset import (
-    CATEGORICAL_COLUMNS,
     Dataset,
     build_dataset,
 )
@@ -65,6 +64,7 @@ def save_artifacts(
     dataset: Dataset,
     version: str,
     embeddings: Path | None = None,
+    drop_features: tuple[str, ...] = (),
 ) -> Path:
     """Everything serving needs, pinned together under one version directory.
 
@@ -86,14 +86,18 @@ def save_artifacts(
                 # rather than relying on the caller passing the same flags.
                 "embeddings_path": str(embeddings) if embeddings else None,
                 "feature_columns": dataset.feature_columns,
-                "categorical_columns": CATEGORICAL_COLUMNS,
+                "categorical_columns": dataset.categorical_columns,
+                # Recorded so evaluate.py rebuilds the identical feature set
+                # and so an ablation run is self-describing rather than
+                # relying on whoever reads the metrics to remember.
+                "dropped_features": list(drop_features),
                 # The ordered category list, not just the column name:
                 # XGBoost's categorical codes are positional, so serving must
                 # rebuild a single row against these exact categories or the
                 # same string silently maps to a different code.
                 "categorical_values": {
                     column: list(map(str, dataset.x_train[column].cat.categories))
-                    for column in CATEGORICAL_COLUMNS
+                    for column in dataset.categorical_columns
                 },
                 "scale_pos_weight": dataset.scale_pos_weight,
                 "best_iteration": int(model.best_iteration),
@@ -106,11 +110,18 @@ def save_artifacts(
     return out_dir
 
 
-def main(limit: int | None, version: str, embeddings: Path | None) -> None:
+def main(
+    limit: int | None,
+    version: str,
+    embeddings: Path | None,
+    drop_features: tuple[str, ...] = (),
+) -> None:
     print("Building dataset (this loads and re-derives features - a few minutes)...")
     if embeddings:
         print(f"Fusing GNN embeddings from {embeddings}")
-    dataset = build_dataset(limit=limit, embeddings_path=embeddings)
+    if drop_features:
+        print(f"Ablation: dropping {', '.join(drop_features)}")
+    dataset = build_dataset(limit=limit, embeddings_path=embeddings, drop_features=drop_features)
     print(f"features: {len(dataset.feature_columns)}")
     print(
         f"train {len(dataset.y_train):,} rows / {int(dataset.y_train.sum()):,} positives | "
@@ -124,7 +135,7 @@ def main(limit: int | None, version: str, embeddings: Path | None) -> None:
     # trained model to a bookkeeping outage would be absurd.
     with tracking.training_run(version, tags={"stage": "train"}):
         model = train(dataset)
-        out_dir = save_artifacts(model, dataset, version, embeddings)
+        out_dir = save_artifacts(model, dataset, version, embeddings, drop_features)
 
         spec = tracking.read_spec(version)
         tracking.log_params(
@@ -164,5 +175,15 @@ if __name__ == "__main__":
         default=None,
         help="Parquet of GNN account embeddings to fuse in (produces the graph-augmented model).",
     )
+    parser.add_argument(
+        "--drop-features",
+        nargs="+",
+        default=None,
+        metavar="FEATURE",
+        help=(
+            "Train without these feature columns (ablation). Apply the same set "
+            "to both halves of a comparison or the lift is not measuring one thing."
+        ),
+    )
     args = parser.parse_args()
-    main(args.limit, args.version, args.embeddings)
+    main(args.limit, args.version, args.embeddings, tuple(args.drop_features or ()))

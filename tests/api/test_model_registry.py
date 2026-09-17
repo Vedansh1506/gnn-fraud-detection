@@ -11,10 +11,10 @@ import json
 
 import pytest
 
-from src.api.model_registry import baseline_and_gnn, lift_pct, list_versions
+from src.api.model_registry import ablation_sets, baseline_and_gnn, lift_pct, list_versions
 
 
-def _write_version(root, name, auprc, roc_auc=0.9, embeddings_version=None):
+def _write_version(root, name, auprc, roc_auc=0.9, embeddings_version=None, dropped=None):
     version_dir = root / name
     version_dir.mkdir(parents=True)
     (version_dir / "metrics.json").write_text(
@@ -37,6 +37,8 @@ def _write_version(root, name, auprc, roc_auc=0.9, embeddings_version=None):
     spec = {"model_version": name, "feature_columns": ["amount_paid"]}
     if embeddings_version is not None:
         spec["embeddings_path"] = f"artifacts/embeddings/{embeddings_version}/embeddings.parquet"
+    if dropped is not None:
+        spec["dropped_features"] = list(dropped)
     (version_dir / "feature_spec.json").write_text(json.dumps(spec))
     return version_dir
 
@@ -124,3 +126,45 @@ def test_real_artifacts_reproduce_the_documented_lift():
     assert baseline.auprc == pytest.approx(0.0198, abs=5e-4)
     assert gnn.auprc == pytest.approx(0.0218, abs=5e-4)
     assert lift_pct(baseline, gnn) == pytest.approx(10.3, abs=0.5)
+
+
+def test_an_ablation_is_never_paired_against_a_full_feature_model(registry_root):
+    """The failure this guards: an ablation run scoring higher than the real
+    baseline would be picked as "baseline", and the reported lift would be
+    measuring the dropped feature AND the embeddings at once while presenting
+    itself as measuring only the embeddings."""
+    _write_version(registry_root, "baseline_nopf_v1", auprc=0.05, dropped=["payment_format"])
+    _write_version(
+        registry_root, "gnn_nopf_v1", auprc=0.09,
+        embeddings_version="gnn_emb_v2", dropped=["payment_format"],
+    )
+    versions = list_versions(registry_root)
+
+    baseline, gnn = baseline_and_gnn(versions)
+    assert baseline.version == "baseline_v1"
+    assert gnn.version == "gnn_v2"
+    assert baseline.dropped_features == ()
+    assert gnn.dropped_features == ()
+
+
+def test_the_ablation_pair_can_be_requested_explicitly(registry_root):
+    _write_version(registry_root, "baseline_nopf_v1", auprc=0.05, dropped=["payment_format"])
+    _write_version(
+        registry_root, "gnn_nopf_v1", auprc=0.09,
+        embeddings_version="gnn_emb_v2", dropped=["payment_format"],
+    )
+    versions = list_versions(registry_root)
+
+    baseline, gnn = baseline_and_gnn(versions, dropped_features=("payment_format",))
+    assert baseline.version == "baseline_nopf_v1"
+    assert gnn.version == "gnn_nopf_v1"
+    assert lift_pct(baseline, gnn) == pytest.approx(80.0)
+
+
+def test_ablation_sets_enumerates_what_was_run(registry_root):
+    _write_version(registry_root, "baseline_nopf_v1", auprc=0.05, dropped=["payment_format"])
+    assert ablation_sets(list_versions(registry_root)) == [("payment_format",)]
+
+
+def test_no_ablations_means_an_empty_list(registry_root):
+    assert ablation_sets(list_versions(registry_root)) == []

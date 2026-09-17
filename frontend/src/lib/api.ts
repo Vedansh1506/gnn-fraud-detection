@@ -91,6 +91,7 @@ export interface ModelVersion {
   best_f1: number
   is_serving: boolean
   embedding_version: string | null
+  dropped_features: string[]
 }
 
 export interface RetrainRun {

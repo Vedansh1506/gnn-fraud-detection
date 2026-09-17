@@ -39,6 +39,25 @@ Three caveats that make this a deliberately **conservative** comparison:
 
 Both models are weak in absolute terms. That is expected: laundering here is *structural*, and a single account-level embedding only partially captures it.
 
+### The ablation — a hypothesis that was wrong
+
+`payment_format` dominates both models (SHAP ~+3.3 vs ~+0.56 for the next feature; ACH carries 73.2% of labelled laundering). That invites an obvious criticism: *"your model is mostly an ACH detector, and the graph is decoration."*
+
+So I tested it. **Hypothesis:** strip out the dominant dataset artifact and the graph's contribution should *grow*, because it was being masked.
+
+**It didn't. The opposite happened:**
+
+| Comparison | Baseline AUPRC | GNN AUPRC | Lift | Recall @ best-F1 |
+|---|---|---|---|---|
+| Full features | 0.0198 | 0.0218 | **+10.3%** | 6.6% → 15.8% (2.4×) |
+| Without `payment_format` | 0.0088 | 0.0091 | **+3.4%** | 4.1% → 6.5% (1.6×) |
+
+Removing `payment_format` roughly **halved both models** and **shrank the graph's relative lift from +10.3% to +3.4%**.
+
+**What that actually means:** the embeddings do not substitute for the payment-rail signal — they *complement* it. The graph's marginal value is larger when the model also has `payment_format`, not smaller. The "hidden graph signal being masked" story is simply not what the data says.
+
+This is reported because it's what happened. Running the experiment, having the favourable hypothesis fail, and publishing the number anyway is the point — the alternative is only reporting ablations that flatter the model, which is how benchmarks stop meaning anything.
+
 ---
 
 ## Screens
@@ -188,7 +207,7 @@ Interactive docs at `localhost:8000/docs`.
 ## Testing
 
 ```bash
-uv run pytest tests/ -q -rs    # 145 tests (-rs shows why any skipped)
+uv run pytest tests/ -q -rs    # 156 tests (-rs shows why any skipped)
 uv run ruff check src/ tests/
 cd frontend && npm test        # 26 frontend tests
 cd frontend && npm run build   # typecheck + production bundle
@@ -269,7 +288,7 @@ src/
 ├── db/           SQLAlchemy models, session wiring, user seeding
 └── common/       Env-var configuration
 frontend/         React dashboard (Vite build, nginx image)
-tests/            145 tests; integration tests skip if infra is down
+tests/            156 tests; integration tests skip if infra is down
 ```
 
 ---

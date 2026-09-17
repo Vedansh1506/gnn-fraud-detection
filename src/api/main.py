@@ -466,6 +466,7 @@ def models(_claims: Annotated[dict, Depends(require_user)]) -> ModelsResponse:
                 best_f1_recall=metrics.best_f1_recall,
                 best_f1=metrics.best_f1,
                 embedding_version=metrics.embedding_version,
+                dropped_features=list(metrics.dropped_features),
                 is_serving=metrics.version == settings.model_version,
             )
             for metrics in versions
