@@ -172,6 +172,14 @@ def params_from_spec(spec: dict[str, Any]) -> dict[str, Any]:
     )
     if spec.get("feature_columns"):
         params["n_features"] = len(spec["feature_columns"])
+
+    # Ablation runs must be self-describing in MLflow. Without this, an
+    # ablation sits in the run list looking like a model that simply scored
+    # badly, and someone comparing AUPRC across runs would be comparing models
+    # trained on different feature sets without knowing it.
+    dropped = spec.get("dropped_features") or []
+    params["is_ablation"] = bool(dropped)
+    params["dropped_features"] = ",".join(sorted(dropped)) if dropped else "none"
     return params
 
 

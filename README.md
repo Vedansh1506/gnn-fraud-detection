@@ -295,4 +295,9 @@ tests/            156 tests; integration tests skip if infra is down
 
 ## License
 
-Not currently licensed for reuse. Built as a portfolio project.
+Released under the [MIT License](LICENSE) — © 2026 Vedansh Patel.
+
+**That covers the code in this repository, and nothing else.** The IBM AML
+*AMLworld* (LI-Small) dataset is third-party, governed by its own terms on
+Kaggle, and is not redistributed here — the data directory is git-ignored and
+you download it yourself. Nothing in the MIT grant above extends to it.
