@@ -70,6 +70,7 @@ export function ModelOps() {
   }
 
   const hasComparison = data.baseline_auprc !== null && data.gnn_auprc !== null
+  const serving = data.versions.find((version) => version.is_serving)
   const baseline = data.versions.find((version) => version.embedding_version === null)
   const gnn = data.versions.find((version) => version.embedding_version !== null)
 
@@ -167,6 +168,12 @@ export function ModelOps() {
             </div>
           </Card>
         </div>
+
+        {serving && serving.alerts_per_day !== null && (
+          <div className="mt-5">
+            <AlertLoad version={serving} threshold={data.flag_threshold} />
+          </div>
+        )}
 
         <div className="mt-5">
           <Card>
@@ -301,6 +308,64 @@ function DeltaStat({
     </div>
   )
 }
+
+/**
+ * What the model costs to operate.
+ *
+ * AUPRC answers "how good is the ranking". This answers the question an
+ * operations manager actually asks: how many alerts land on the queue each
+ * day, and how many of them are real. Both come from the evaluation artifact -
+ * nothing here is computed in the browser.
+ *
+ * The precision is deliberately not dressed up. At this threshold most alerts
+ * are false positives, which is normal for fraud detection at a 1-in-1,500
+ * base rate, and saying so is more useful than hiding it.
+ */
+function AlertLoad({ version, threshold }: { version: ModelVersion; threshold: number }) {
+  const perDay = version.alerts_per_day ?? 0
+  const precision = version.precision_at_threshold
+  const recall = version.recall_at_threshold
+  const reviewed = version.transactions_per_day
+
+  return (
+    <Card>
+      <CardHeader
+        title="Review load"
+        description={`What the queue looks like at the pinned threshold of ${threshold}.`}
+      />
+      <div className="px-5 py-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile
+            label="Alerts / day"
+            value={Math.round(perDay)}
+            hint={reviewed ? `from ~${formatCount(Math.round(reviewed))} transactions` : undefined}
+          />
+          <StatTile
+            label="Precision"
+            value={formatPercent(precision)}
+            hint="Share of alerts that are real"
+          />
+          <StatTile
+            label="Recall"
+            value={formatPercent(recall)}
+            hint="Share of laundering caught"
+          />
+          <StatTile
+            label="True hits / day"
+            value={Math.round(perDay * (precision ?? 0) * 10) / 10}
+            hint="Confirmed laundering surfaced"
+          />
+        </div>
+        <p className="mt-4 text-[11px] leading-relaxed text-[var(--ink-muted)]">
+          Measured on the held-out window, not projected. At a base rate near one laundering
+          transaction in 1,500, most alerts are false positives — that is expected in fraud
+          detection, and the reason the queue is ranked by score rather than simply filtered.
+        </p>
+      </div>
+    </Card>
+  )
+}
+
 
 function VersionTable({ versions }: { versions: ModelVersion[] }) {
   if (versions.length === 0) {

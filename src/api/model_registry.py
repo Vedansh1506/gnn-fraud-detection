@@ -41,6 +41,13 @@ class VersionMetrics:
     # populated for ablation runs. Comparisons must only be made within a
     # matching set - see `baseline_and_gnn`.
     dropped_features: tuple[str, ...] = ()
+    # Operational view of the same model: how many alerts a day the pinned
+    # threshold produces and how many are real. None for versions evaluated
+    # before this was recorded - absent, not zero.
+    alerts_per_day: float | None = None
+    precision_at_threshold: float | None = None
+    recall_at_threshold: float | None = None
+    transactions_per_day: float | None = None
 
 
 def _read_spec(version_dir: Path) -> dict:
@@ -80,6 +87,8 @@ def _load_one(version_dir: Path) -> VersionMetrics | None:
         return None
 
     operating_point = raw.get("best_f1_operating_point", {})
+    capacity = raw.get("alert_capacity") or {}
+    at_threshold = capacity.get("at_flag_threshold") or {}
     try:
         return VersionMetrics(
             version=raw.get("model_version", version_dir.name),
@@ -93,6 +102,10 @@ def _load_one(version_dir: Path) -> VersionMetrics | None:
             best_f1=float(operating_point["f1"]),
             embedding_version=_read_embedding_version(version_dir),
             dropped_features=tuple(_read_spec(version_dir).get("dropped_features") or ()),
+            alerts_per_day=at_threshold.get("alerts_per_day"),
+            precision_at_threshold=at_threshold.get("precision"),
+            recall_at_threshold=at_threshold.get("recall"),
+            transactions_per_day=capacity.get("transactions_per_day"),
         )
     except (KeyError, TypeError, ValueError):
         # A half-written metrics file is a real possibility mid-training run.

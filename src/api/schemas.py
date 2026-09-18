@@ -172,6 +172,12 @@ class ModelVersionOut(BaseModel):
     # label these, or an ablation row reads as a normal model that simply
     # scored badly.
     dropped_features: list[str] = []
+    # Operational view. None where a version predates this being recorded -
+    # the UI shows an em-dash rather than implying zero alerts a day.
+    alerts_per_day: float | None = None
+    precision_at_threshold: float | None = None
+    recall_at_threshold: float | None = None
+    transactions_per_day: float | None = None
 
 
 class DriftStatus(BaseModel):

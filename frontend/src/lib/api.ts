@@ -92,6 +92,10 @@ export interface ModelVersion {
   is_serving: boolean
   embedding_version: string | null
   dropped_features: string[]
+  alerts_per_day: number | null
+  precision_at_threshold: number | null
+  recall_at_threshold: number | null
+  transactions_per_day: number | null
 }
 
 export interface RetrainRun {

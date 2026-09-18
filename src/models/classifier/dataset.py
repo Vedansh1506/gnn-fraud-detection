@@ -98,6 +98,11 @@ class Dataset:
     x_test: pd.DataFrame
     y_test: pd.Series
     account_features: pd.DataFrame
+    # Test-split transaction times. Carried through so evaluation can express
+    # results as an operational rate ("alerts per day") rather than only as a
+    # ranking metric - the test window's length is data, not a constant to
+    # hardcode, and it changes if the split boundaries ever move.
+    test_timestamps: pd.Series | None = None
     feature_columns: list[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
     # Only the categoricals actually present. An ablation that drops
     # `payment_format` must not leave it listed here, or saving artifacts fails
@@ -178,6 +183,7 @@ def build_dataset(
         x_test=build_features(test_df, account_features, embeddings)[columns],
         y_test=test_df["Is Laundering"].astype(int).reset_index(drop=True),
         account_features=account_features,
+        test_timestamps=test_df["Timestamp"].reset_index(drop=True),
         feature_columns=columns,
         categorical_columns=[c for c in CATEGORICAL_COLUMNS if c in columns],
     )

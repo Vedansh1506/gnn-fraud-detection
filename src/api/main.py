@@ -467,6 +467,10 @@ def models(_claims: Annotated[dict, Depends(require_user)]) -> ModelsResponse:
                 best_f1=metrics.best_f1,
                 embedding_version=metrics.embedding_version,
                 dropped_features=list(metrics.dropped_features),
+                alerts_per_day=metrics.alerts_per_day,
+                precision_at_threshold=metrics.precision_at_threshold,
+                recall_at_threshold=metrics.recall_at_threshold,
+                transactions_per_day=metrics.transactions_per_day,
                 is_serving=metrics.version == settings.model_version,
             )
             for metrics in versions

@@ -60,6 +60,33 @@ This is reported because it's what happened. Running the experiment, having the 
 
 ---
 
+### What it costs to run
+
+AUPRC measures ranking quality. It does not answer the question an operations manager asks: *"my team reviews N alerts a day — what do we catch?"* So evaluation reports that too, measured on the same held-out window (9 days, ~130,500 transactions/day).
+
+At the pinned threshold of 0.9:
+
+| Model | Alerts / day | Precision | Recall |
+|---|---|---|---|
+| `baseline_v1` | 1,050 | 2.2% | 25.8% |
+| **`gnn_v2`** (serving) | **618** | **3.8%** | **26.7%** |
+
+**This is the clearest practical case for the graph model, and AUPRC obscures it.** The GNN-augmented model produces **41% fewer alerts** (1,050 → 618) while catching *slightly more* laundering (25.8% → 26.7%) — nearly halving the review workload for the same detection. A +10.3% AUPRC lift doesn't communicate that; "your analysts review 432 fewer alerts a day for the same result" does.
+
+Trading review capacity against recall, for the serving model:
+
+| Analyst capacity | Precision | Recall | Laundering caught |
+|---|---|---|---|
+| 50 / day | 7.6% | 4.2% | 34 |
+| 250 / day | 5.6% | 15.8% | 127 |
+| 1,000 / day | 2.9% | 32.8% | 263 |
+
+Most alerts are false positives at every setting. That is normal at a ~1-in-1,500 base rate, and it is why the queue is **ranked by score** rather than simply filtered — the analyst works down from the top and stops when capacity runs out.
+
+> One more result from the ablation: **`baseline_nopf_v1` never reaches the 0.9 threshold on any of the 1.17M test transactions.** Stripped of `payment_format`, the tabular model would flag *nothing at all* in production. Its ranking is still better than random (AUPRC 0.0088 vs 0.00068), which is exactly why a threshold-free metric alone can mislead.
+
+---
+
 ## Screens
 
 | Flag queue | Flag detail |
@@ -207,7 +234,7 @@ Interactive docs at `localhost:8000/docs`.
 ## Testing
 
 ```bash
-uv run pytest tests/ -q -rs    # 156 tests (-rs shows why any skipped)
+uv run pytest tests/ -q -rs    # 165 tests (-rs shows why any skipped)
 uv run ruff check src/ tests/
 cd frontend && npm test        # 26 frontend tests
 cd frontend && npm run build   # typecheck + production bundle
@@ -288,7 +315,7 @@ src/
 ├── db/           SQLAlchemy models, session wiring, user seeding
 └── common/       Env-var configuration
 frontend/         React dashboard (Vite build, nginx image)
-tests/            156 tests; integration tests skip if infra is down
+tests/            165 tests; integration tests skip if infra is down
 ```
 
 ---
