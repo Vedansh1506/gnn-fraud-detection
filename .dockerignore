@@ -1,0 +1,16 @@
+# Keep the build context small and secrets out of it.
+.git
+.venv
+node_modules
+frontend
+docs
+artifacts
+data
+mlruns
+mlflow.db
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+.env
+assets

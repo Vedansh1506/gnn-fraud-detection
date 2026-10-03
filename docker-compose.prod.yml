@@ -1,0 +1,87 @@
+# Cloud deployment: one EC2 instance running the API + dashboard (SAD §9).
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# **What is deliberately NOT here.** Postgres, Neo4j and the broker are managed
+# services in the cloud — RDS Free-tier, Neo4j AuraDB Free, and Kinesis — not
+# containers on this box. A t3.micro has 1 GB of RAM; running a graph database
+# beside the API on it would starve both, and the locked architecture already
+# says these are managed.
+#
+# So this file runs exactly two things: the scoring API and the static
+# dashboard. Everything stateful lives outside the instance, which also means a
+# terminated instance loses nothing.
+#
+# Required environment (set in .env on the instance, never committed):
+#   POSTGRES_* ............ RDS endpoint and credentials
+#   NEO4J_* ............... AuraDB connection URI and credentials
+#   JWT_SECRET_KEY ........ regenerated for the deployment, not the dev value
+#   SERVICE_API_KEY ....... regenerated for the deployment
+#   S3_ARTIFACTS_BUCKET ... where the pinned artifacts live
+#   CORS_ALLOWED_ORIGINS .. the dashboard's public origin
+#   PUBLIC_API_URL ........ the API URL as a BROWSER resolves it
+
+name: gnn-fraud-detection-prod
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gnn-fraud-api:latest
+    container_name: api
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      # Artifacts are fetched at start by the entrypoint rather than baked into
+      # the image, so a retrain is a restart and not a rebuild.
+      S3_ARTIFACTS_BUCKET: ${S3_ARTIFACTS_BUCKET}
+      MODEL_VERSION: ${MODEL_VERSION:-gnn_v2}
+      EMBEDDING_VERSION: ${EMBEDDING_VERSION:-gnn_emb_v2}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Survives container replacement, so a restart does not re-download
+      # ~115 MB from S3 every time.
+      - artifacts:/app/artifacts
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+    # MEASURED, not guessed: 653 MiB steady state, 911 MiB peak while scoring
+    # (SHAP allocates during explanation). The pinned embeddings are ~135 MB and
+    # account features ~81 MB as DataFrames, and the string-keyed indexes cost
+    # more than the values do.
+    #
+    # A t3.micro/t2.micro has 1024 MiB TOTAL, of which the OS and Docker daemon
+    # take 150-250 MiB. Steady state fits; the 911 MiB peak does not. Either run
+    # a 2 GB instance, or give the micro a swap file and accept that a burst may
+    # page. This limit assumes the latter - raise it to 1500m on a 2 GB box.
+    deploy:
+      resources:
+        limits:
+          memory: 950m
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked in at build time — Vite has no runtime env. This must be the
+        # URL the *browser* resolves, never a compose service name, or the
+        # dashboard loads and then cannot reach its own API.
+        VITE_API_BASE_URL: ${PUBLIC_API_URL}
+    image: gnn-fraud-frontend:latest
+    container_name: frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  artifacts:

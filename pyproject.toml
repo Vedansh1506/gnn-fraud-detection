@@ -54,6 +54,37 @@ dependencies = [
 ]
 
 [dependency-groups]
+# The subset the scoring API actually imports at runtime, for the serving
+# container. Installed with `uv sync --only-group serving`.
+#
+# Why this exists: torch, torch-geometric, mlflow, feast and evidently are core
+# dependencies of the *project* but are never imported on the serving path -
+# they belong to offline training and MLOps. Installing them into the serving
+# image would add well over a gigabyte to an image destined for a 1 GB
+# t3.micro, for code that never runs there.
+#
+# These pins duplicate [project.dependencies] deliberately, and
+# tests/test_serving_deps.py fails if the two ever disagree - so the
+# duplication cannot rot silently.
+serving = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "xgboost==3.2.0",
+    "scikit-learn==1.9.0",
+    "shap==0.51.0",
+    "neo4j==6.3.0",
+    "sqlalchemy==2.0.52",
+    "psycopg[binary]==3.3.5",
+    "boto3==1.43.89",
+    "pandas==2.3.3",
+    "numpy==2.4.6",
+    "pyarrow==25.0.1",
+    "pyjwt==2.13.0",
+    "bcrypt==5.0.0",
+    "python-dotenv==1.2.3",
+]
 dev = [
     "pytest==9.1.1",
     "httpx==0.28.1",

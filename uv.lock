@@ -903,6 +903,25 @@ dev = [
 gnn = [
     { name = "pyg-lib", marker = "sys_platform == 'win32'" },
 ]
+serving = [
+    { name = "bcrypt" },
+    { name = "boto3" },
+    { name = "fastapi" },
+    { name = "neo4j" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt" },
+    { name = "python-dotenv" },
+    { name = "scikit-learn" },
+    { name = "shap" },
+    { name = "sqlalchemy" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "xgboost" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -938,6 +957,25 @@ dev = [
     { name = "ruff", specifier = "==0.16.6" },
 ]
 gnn = [{ name = "pyg-lib", marker = "sys_platform == 'win32'", specifier = "==0.9.0+pt212cpu", index = "https://data.pyg.org/whl/torch-2.12.0+cpu.html" }]
+serving = [
+    { name = "bcrypt", specifier = "==5.0.0" },
+    { name = "boto3", specifier = "==1.43.89" },
+    { name = "fastapi", specifier = "==0.141.1" },
+    { name = "neo4j", specifier = "==6.3.0" },
+    { name = "numpy", specifier = "==2.4.6" },
+    { name = "pandas", specifier = "==2.3.3" },
+    { name = "psycopg", extras = ["binary"], specifier = "==3.3.5" },
+    { name = "pyarrow", specifier = "==25.0.1" },
+    { name = "pydantic", specifier = "==2.13.5" },
+    { name = "pydantic-settings", specifier = "==2.15.0" },
+    { name = "pyjwt", specifier = "==2.13.0" },
+    { name = "python-dotenv", specifier = "==1.2.3" },
+    { name = "scikit-learn", specifier = "==1.9.0" },
+    { name = "shap", specifier = "==0.51.0" },
+    { name = "sqlalchemy", specifier = "==2.0.52" },
+    { name = "uvicorn", extras = ["standard"], specifier = "==0.52.4" },
+    { name = "xgboost", specifier = "==3.2.0" },
+]
 
 [[package]]
 name = "google-auth"
