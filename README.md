@@ -233,6 +233,13 @@ Interactive docs at `localhost:8000/docs`.
 
 ## Testing
 
+Before any demo, run the end-to-end check — it walks the exact path a demo
+walks and fails loudly on the things that actually break:
+
+```bash
+uv run python -m scripts.smoke     # 21 checks; want "0 failed"
+```
+
 ```bash
 uv run pytest tests/ -q -rs    # 165 tests (-rs shows why any skipped)
 uv run ruff check src/ tests/
