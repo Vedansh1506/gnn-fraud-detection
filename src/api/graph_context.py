@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from neo4j import Driver
+
 from src.graph.client import session_scope
 
 # rules.md caps the rendered graph at ~30 nodes, for legibility as much as
@@ -38,9 +40,17 @@ class GraphNeighbourhood:
     truncated: bool
 
 
-def fetch_neighbourhood(account_key: str, hops: int) -> GraphNeighbourhood:
+def fetch_neighbourhood(
+    account_key: str, hops: int, driver: Driver | None = None
+) -> GraphNeighbourhood:
     """Collect the distinct accounts and transactions within `hops` of the
-    given account, capped at MAX_NODES."""
+    given account, capped at MAX_NODES.
+
+    `driver` targets a different graph than the configured one. It exists so
+    the cloud subgraph export and its verification run *this* query rather
+    than a copy of it - a copy would drift, and the export is only correct if
+    it reproduces exactly what the panel shows.
+    """
     # Fetch one more than the cap so "did we cut anything off?" is answerable:
     # reporting a partial neighbourhood as complete would quietly mislead the
     # analyst about who a flagged account deals with.
@@ -56,8 +66,12 @@ def fetch_neighbourhood(account_key: str, hops: int) -> GraphNeighbourhood:
         f"LIMIT {fetch_limit}"
     )
 
-    with session_scope() as session:
-        records = list(session.run(query, account_key=account_key))
+    if driver is not None:
+        with driver.session() as session:
+            records = list(session.run(query, account_key=account_key))
+    else:
+        with session_scope() as session:
+            records = list(session.run(query, account_key=account_key))
 
     truncated = len(records) > MAX_EDGES
     edges: list[GraphEdge] = []

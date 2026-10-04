@@ -275,3 +275,6 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 *.local
+
+# Generated graph export for the cloud demo (re-create with scripts.subgraph export)
+subgraph.json
