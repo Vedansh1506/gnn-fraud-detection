@@ -6,6 +6,8 @@ Real-time money-laundering detection that models accounts and payments as a **gr
 
 Built end-to-end: streaming ingestion → graph store → offline GNN → online scoring API → analyst dashboard.
 
+**Live demo:** [http://13.234.184.9](http://13.234.184.9) — deployed on AWS (EC2, RDS, S3) with Neo4j AuraDB. Login credentials available on request.
+
 <p align="center">
   <img src="assets/model-ops.png" alt="Model &amp; Ops screen showing the baseline-vs-GNN AUPRC lift" width="100%">
 </p>
