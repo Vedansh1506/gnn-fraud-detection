@@ -37,15 +37,21 @@ services:
     environment:
       # Artifacts are fetched at start by the entrypoint rather than baked into
       # the image, so a retrain is a restart and not a rebuild.
-      S3_ARTIFACTS_BUCKET: ${S3_ARTIFACTS_BUCKET}
+      S3_ARTIFACTS_BUCKET: ${S3_ARTIFACTS_BUCKET:-}
       MODEL_VERSION: ${MODEL_VERSION:-gnn_v2}
       EMBEDDING_VERSION: ${EMBEDDING_VERSION:-gnn_emb_v2}
-    ports:
-      - "8000:8000"
+    # No published port: the API is only reachable through nginx at /api/,
+    # so the internet sees port 80 and nothing else.
+    expose:
+      - "8000"
     volumes:
       # Survives container replacement, so a restart does not re-download
       # ~115 MB from S3 every time.
-      - artifacts:/app/artifacts
+      # Bind-mounted from the host. The instance has no IAM role (the deploying
+      # user cannot create roles), so artifacts are copied onto the box rather
+      # than fetched from S3; leave S3_ARTIFACTS_BUCKET empty in that case and
+      # the entrypoint just verifies they are present.
+      - ${ARTIFACTS_PATH:-./artifacts}:/app/artifacts:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s
@@ -60,11 +66,12 @@ services:
     # A t3.micro/t2.micro has 1024 MiB TOTAL, of which the OS and Docker daemon
     # take 150-250 MiB. Steady state fits; the 911 MiB peak does not. Either run
     # a 2 GB instance, or give the micro a swap file and accept that a burst may
-    # page. This limit assumes the latter - raise it to 1500m on a 2 GB box.
+    # page. Deployed on a t3.small (2 GB, free-tier eligible on this account),
+    # so the limit leaves ~500 MiB for the OS, Docker and nginx.
     deploy:
       resources:
         limits:
-          memory: 950m
+          memory: 1500m
 
   frontend:
     build:
@@ -83,5 +90,3 @@ services:
       api:
         condition: service_healthy
 
-volumes:
-  artifacts:
