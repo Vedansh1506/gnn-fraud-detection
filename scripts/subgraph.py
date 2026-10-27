@@ -5,7 +5,8 @@
     uv run python -m scripts.subgraph verify --file subgraph.json --uri neo4j+s://xxxx.databases.neo4j.io
 
 The target password is read from TARGET_NEO4J_PASSWORD, never a CLI argument,
-so it does not land in shell history (same rule as src.db.seed_users).
+so it does not land in shell history (same rule as src.db.seed_users). Set
+TARGET_NEO4J_USER too: AuraDB usernames are instance-specific, not "neo4j".
 
 **Why a subgraph.** The full graph is 705,907 accounts and 6.9M payments.
 AuraDB Free holds at most 200,000 nodes and 400,000 relationships, so it cannot
@@ -189,7 +190,10 @@ def main() -> int:
         p = sub.add_parser(name)
         p.add_argument("--file", type=Path, default=Path("subgraph.json"))
         p.add_argument("--uri", required=True, help="Target, e.g. neo4j+s://xxxx.databases.neo4j.io")
-        p.add_argument("--user", default="neo4j")
+        # Newer AuraDB instances issue an instance-specific username rather
+        # than "neo4j", so defaulting to "neo4j" fails with an auth error that
+        # looks like a wrong password. Read it from the environment instead.
+        p.add_argument("--user", default=os.environ.get("TARGET_NEO4J_USER", "neo4j"))
 
     args = parser.parse_args()
     if args.command == "export":
